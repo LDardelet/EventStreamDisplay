@@ -62,14 +62,40 @@ class Display:
         self.StreamsInfos = {}
         self.StreamsTimes = {}
 
-        self._InitEventsVars()
-        self._InitTrackerEventsVars()
-
         self.ReloadNames = False
         self.ReloadMap = False
         
         self.MainWindow = Tk.Tk()
         self.MainWindow.title('Projector')
+        # Create different frames
+        self.DisplayFrame = Tk.Frame(self.MainWindow)
+        self.DisplayFrame.grid(row = 0, column = 0, rowspan = 8)
+
+        self.RTFrame = Tk.Frame(self.MainWindow)
+        self.RTFrame.grid(row = 0, column = 2, rowspan = 2)
+
+        self.EventSpecificFrame = Tk.Frame(self.MainWindow)
+        self.EventSpecificFrame.grid(row = 1, column = 1, sticky = Tk.W)
+
+        self.PolaritiesFrame = Tk.Frame(self.MainWindow)
+        self.PolaritiesFrame.grid(row = 2, column = 1, sticky = Tk.W)
+
+        self.DisplayedTypesFrame = Tk.Frame(self.MainWindow)
+        self.DisplayedTypesFrame.grid(row = 3, column = 1, sticky = Tk.W)
+
+        self.StreamsFrame = Tk.Frame(self.MainWindow)
+        self.StreamsFrame.grid(row = 4, column = 1, columnspan = 2, sticky = Tk.W)
+
+        self.StreamInfoFrame = Tk.Frame(self.MainWindow)
+        self.StreamInfoFrame.grid(row = 0, column = 1, sticky = Tk.W)
+
+        TauFrame = Tk.Frame(self.StreamInfoFrame)
+        TauFrame.pack(anchor = Tk.W)
+
+        # Initialize Event specific features
+        self._InitEventsVars()
+        self._InitTrackerEventsVars()
+
         self.StreamsVariable = Tk.IntVar(master = self.MainWindow)
         self._MinimumGeometry = np.array([10, 10, 2])
         self.AddStream('None', self._MinimumGeometry)
@@ -79,13 +105,10 @@ class Display:
         self.DisplayCMap = 'binary'
         self.DisplayImShow = self.DisplayAx.imshow(self.StreamsMaps['None'][:,:,0], vmin = 0, vmax = 1, origin = "lower", cmap = self.DisplayCMap)
         
-        self.DisplayCanvas = FigureCanvasTkAgg(self.Display, self.MainWindow)
+        self.DisplayCanvas = FigureCanvasTkAgg(self.Display, self.DisplayFrame)
         self.DisplayCanvas.draw()
-        self.DisplayCanvas.get_tk_widget().grid(row = 0, column = 0, rowspan = 8)
+        self.DisplayCanvas.get_tk_widget().grid(row = 0, column = 0)
         
-        self.RTFrame = Tk.Frame(self.MainWindow)
-        self.RTFrame.grid(row = 0, column = 2, rowspan = 2)
-
         self.RTMinLim = 10**-4
         self.RTMaxLim = 10**1
         self.CurrentRTValue = 1
@@ -113,26 +136,12 @@ class Display:
         self.FPSLabel = Tk.Label(self.RTFrame, text = "FPS : {0}".format(0))
         self.FPSLabel.grid(row = 1, column = 0)
         
-        self.CountFrame = Tk.Frame(self.MainWindow)
-        self.CountFrame.grid(row = 1, column = 1, sticky = Tk.W)
-        L = Tk.Label(self.CountFrame, text = "Currently displayed events :")
-        L.pack(anchor = Tk.W)
-        self.EventsLabel = Tk.Label(self.CountFrame)
-        self.EventsLabel.pack(anchor = Tk.W)
-        L = Tk.Label(self.CountFrame, text = "Pipeline efficiency :")
-        L.pack(anchor = Tk.W)
-        self.EfficiencyLabel = Tk.Label(self.CountFrame)
-        self.EfficiencyLabel.pack(anchor = Tk.W)
-	
-        self.PolaritiesFrame = Tk.Frame(self.MainWindow)
-
         self.ColorsSelection = ['Single color', 'Rainbow mode']
         self.ColorsVMax = [1., 2.]
         self.ColorsMode = 1
         self.ColorSelectionButton = Tk.Button(self.PolaritiesFrame, text = self.ColorsSelection[self.ColorsMode], command = self.ChangeColorMode)
         self.ColorSelectionButton.pack(anchor = Tk.W)
 
-        self.PolaritiesFrame.grid(row = 2, column = 1, sticky = Tk.W)
         L = Tk.Label(self.PolaritiesFrame, text = "Polarities selection :")
         L.pack(anchor = Tk.W)
         PolasModes = [("OFF", 0),
@@ -148,8 +157,6 @@ class Display:
             self.PolaritiesButtons += [Tk.Checkbutton(self.PolaritiesFrame, text = Text, variable = self.DisplayedPolaritiesVars[-1], command = lambda n=nPola, P=Polarity: self.SwitchDisplayedPolasOnOff(n,P))]
             self.PolaritiesButtons[-1].pack(anchor = Tk.W)
 
-        self.DisplayedTypesFrame = Tk.Frame(self.MainWindow)
-        self.DisplayedTypesFrame.grid(row = 3, column = 1, sticky = Tk.W)
         L = Tk.Label(self.DisplayedTypesFrame, text = "Display selection :")
         L.pack(anchor = Tk.W)
         DisplayedTypes = [("Events", 0),
@@ -167,24 +174,21 @@ class Display:
             self.DisplayedTypesButtons += [Tk.Checkbutton(self.DisplayedTypesFrame, text = Text, variable = self.DisplayedTypesVars[-1], command = lambda n=nType, E=EventType: self.SwitchDisplayedTypeOnOff(n,E))]
             self.DisplayedTypesButtons[-1].pack(anchor = Tk.W)
 
-        self.StreamsFrame = Tk.Frame(self.MainWindow)
-        self.StreamsFrame.grid(row = 4, column = 1, columnspan = 2, sticky = Tk.W)
         L = Tk.Label(self.StreamsFrame, text = "Streams selection :")
         L.pack(anchor = Tk.W)
         self.StreamsButtons = {'None': Tk.Radiobutton(self.StreamsFrame, text = self.StreamsInfos['None'], variable = self.StreamsVariable, value = 0, command = lambda:self.SwitchStream(0))}
         self.StreamsButtons['None'].pack(anchor = Tk.W)
         self.CurrentStream = self.Streams[self.StreamsVariable.get()]
 
-        self.StreamInfoFrame = Tk.Frame(self.MainWindow)
-        self.StreamInfoFrame.grid(row = 0, column = 1, sticky = Tk.W)
-
         L = Tk.Label(self.StreamInfoFrame, text = "Current Timestamp :")
         L.pack(anchor = Tk.W)
         self.TSLabel = Tk.Label(self.StreamInfoFrame)
         self.TSLabel.pack(anchor = Tk.W)
+        L = Tk.Label(self.StreamInfoFrame, text = "Pipeline efficiency :")
+        L.pack(anchor = Tk.W)
+        self.EfficiencyLabel = Tk.Label(self.StreamInfoFrame)
+        self.EfficiencyLabel.pack(anchor = Tk.W)
 
-        TauFrame = Tk.Frame(self.StreamInfoFrame)
-        TauFrame.pack(anchor = Tk.W)
         self.TauLabel = Tk.Label(TauFrame, text = "Tau : {0} ms".format(self.Tau))
         self.TauLabel.grid(column = 0, row = 0)
         TauMinusButton = Tk.Button(TauFrame, text = ' - ', command = lambda: self.ChangeTau(-1))
@@ -354,6 +358,10 @@ class Display:
     def _InitEventsVars(self):
         self.StreamsShapes = {}
         self.StreamsMaps = {}
+        L = Tk.Label(self.EventSpecificFrame, text = "Currently displayed events :")
+        L.pack(anchor = Tk.W)
+        self.EventsLabel = Tk.Label(self.EventSpecificFrame)
+        self.EventsLabel.pack(anchor = Tk.W)
 
     def AddEventsStreamVars(self, Name, Geometry):
         self.StreamsShapes[Name] = Geometry
@@ -393,6 +401,10 @@ class Display:
         self.DisplayedTrackers = {}
         self.DisplayedTrackersIDs = {}
         self.CurrentStreamLastUpdatedAlphasTs = {}
+        L = Tk.Label(self.EventSpecificFrame, text = "Active trackers :")
+        L.pack(anchor = Tk.W)
+        self.TrackersLabel = Tk.Label(self.EventSpecificFrame)
+        self.TrackersLabel.pack(anchor = Tk.W)
 
     def AddTrackersStreamVars(self, Name, Geometry):
         self.ActiveTrackers[Name] = {}
@@ -473,6 +485,7 @@ class Display:
                                 self.UpdateTrackerParts(TrackerID, TrackerData)
                                 self.UpdateTrackerAlpha(TrackerID, Alpha)
                 self.UpdatedTrackers[self.CurrentStream] = []
+        self.TrackersLabel['text'] = "{0}".format(len(self.ActiveTrackers[self.CurrentStream]))
 
     def UpdateTS(self):
         self.TSLabel['text'] = "{0} ms".format(int(1000*self.StreamsTimes[self.CurrentStream]))
