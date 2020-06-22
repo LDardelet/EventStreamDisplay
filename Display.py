@@ -93,6 +93,7 @@ class Display:
         TauFrame.pack(anchor = Tk.W)
 
         # Initialize Event specific features
+        self._EventDecryptFunctions = {}
         self._InitEventsVars()
         self._InitTrackerEventsVars()
 
@@ -355,6 +356,12 @@ class Display:
         self.PreviousNEvents = 0
         self.MainWindow.after(5, self.UpdateScene)
 
+    def _DecryptFullEvent(self, Socket, eventList):
+        t = eventList[1]
+        self.StreamsTimes[Socket] = max(self.StreamsTimes[Socket], t)
+        for Extension in eventList[2:]:
+            self._EventDecryptFunctions[Extension[0]](Socket, t, Extension[1:])
+
     def _InitEventsVars(self):
         self.StreamsShapes = {}
         self.StreamsMaps = {}
@@ -362,6 +369,10 @@ class Display:
         L.pack(anchor = Tk.W)
         self.EventsLabel = Tk.Label(self.EventSpecificFrame)
         self.EventsLabel.pack(anchor = Tk.W)
+        self._EventDecryptFunctions[1] = self._DecryptEvent
+
+    def _DecryptEvent(self, Socket, t, eventList):
+        self.StreamsMaps[Socket][eventList[0][0], eventList[0][1], eventList[1]] = t
 
     def AddEventsStreamVars(self, Name, Geometry):
         self.StreamsShapes[Name] = Geometry
@@ -405,10 +416,18 @@ class Display:
         L.pack(anchor = Tk.W)
         self.TrackersLabel = Tk.Label(self.EventSpecificFrame)
         self.TrackersLabel.pack(anchor = Tk.W)
+        self._EventDecryptFunctions[2] = self._DecryptTrackerEvent
+
+    def _DecryptTrackerEvent(self, Socket, t, eventList):
+# Structure is [x, y, t, p, 1, ID, xTracker, yTracker, rTracker, sTracker, color, marker]
+# Structure is [Location, ID, Angle, Scaling, Color, Marker]
+        ID = eventList.pop(1)
+        self.ActiveTrackers[Socket][ID] = eventList + [t,t]
+        self.UpdatedTrackers[Socket].add(ID)
 
     def AddTrackersStreamVars(self, Name, Geometry):
         self.ActiveTrackers[Name] = {}
-        self.UpdatedTrackers[Name] = []
+        self.UpdatedTrackers[Name] = set()
         self.CurrentStreamLastUpdatedAlphasTs[Name] = -np.inf
     def RemoveTrackersStreamVars(self, Name):
         del self.ActiveTrackers[Name]
@@ -419,22 +438,24 @@ class Display:
     
     def AddTrackerParts(self, TrackerID, TrackerData, Alpha):
         self.DisplayedTrackers[TrackerID] = [None, None]
-        self.DisplayedTrackers[TrackerID][0] = self.DisplayAx.plot(TrackerData[0], TrackerData[1], marker = TrackerData[5], color = TrackerData[4], alpha = Alpha)[0]
-        Theta, S = TrackerData[2], TrackerData[3]
+        self.DisplayedTrackers[TrackerID][0] = self.DisplayAx.plot(TrackerData[0][0], TrackerData[0][1], color = TrackerData[3], marker = TrackerData[4], alpha = Alpha)[0]
+        Theta, S = TrackerData[1], TrackerData[2]
         dx, dy = self.TrackersScalingSize * S * np.cos(Theta), self.TrackersScalingSize * S * np.sin(Theta)
-        self.DisplayedTrackers[TrackerID][1] = self.DisplayAx.plot([TrackerData[0], TrackerData[0]+dx], [TrackerData[1], TrackerData[1]+dy], color = TrackerData[4], alpha = Alpha)[0]
-        self.DisplayedTrackersIDs[TrackerID] = self.DisplayAx.text(TrackerData[0] + 5, TrackerData[1], str(TrackerID), color = TrackerData[4], alpha = Alpha)
+        self.DisplayedTrackers[TrackerID][1] = self.DisplayAx.plot([TrackerData[0][0], TrackerData[0][0]+dx], [TrackerData[0][1], TrackerData[0][1]+dy], color = TrackerData[3], alpha = Alpha)[0]
+        self.DisplayedTrackersIDs[TrackerID] = self.DisplayAx.text(TrackerData[0][0] + 5, TrackerData[0][1], str(TrackerID), color = TrackerData[3], alpha = Alpha)
+
     def UpdateTrackerParts(self, TrackerID, TrackerData):
-        self.DisplayedTrackers[TrackerID][0].set_data(TrackerData[0], TrackerData[1])
-        self.DisplayedTrackers[TrackerID][0].set_color(TrackerData[4])
-        self.DisplayedTrackers[TrackerID][0].set_marker(TrackerData[5])
-        Theta, S = TrackerData[2], TrackerData[3]
+        self.DisplayedTrackers[TrackerID][0].set_data(TrackerData[0][0], TrackerData[0][1])
+        self.DisplayedTrackers[TrackerID][0].set_color(TrackerData[3])
+        self.DisplayedTrackers[TrackerID][0].set_marker(TrackerData[4])
+        Theta, S = TrackerData[1], TrackerData[2]
         dx, dy = self.TrackersScalingSize * S * np.cos(Theta), self.TrackersScalingSize * S * np.sin(Theta)
-        self.DisplayedTrackers[TrackerID][1].set_data([TrackerData[0], TrackerData[0]+dx], [TrackerData[1], TrackerData[1]+dy])
-        self.DisplayedTrackers[TrackerID][1].set_color(TrackerData[4])
-        self.DisplayedTrackersIDs[TrackerID].set_x(TrackerData[0] + 5)
-        self.DisplayedTrackersIDs[TrackerID].set_y(TrackerData[1])
-        self.DisplayedTrackersIDs[TrackerID].set_color(TrackerData[4])
+        self.DisplayedTrackers[TrackerID][1].set_data([TrackerData[0][0], TrackerData[0][0]+dx], [TrackerData[0][1], TrackerData[0][1]+dy])
+        self.DisplayedTrackers[TrackerID][1].set_color(TrackerData[3])
+        self.DisplayedTrackersIDs[TrackerID].set_x(TrackerData[0][0] + 5)
+        self.DisplayedTrackersIDs[TrackerID].set_y(TrackerData[0][1])
+        self.DisplayedTrackersIDs[TrackerID].set_color(TrackerData[3])
+
     def UpdateTrackerAlpha(self, TrackerID, Alpha):
         self.DisplayedTrackers[TrackerID][0].set_alpha(Alpha)
         self.DisplayedTrackers[TrackerID][1].set_alpha(Alpha)
@@ -455,7 +476,7 @@ class Display:
                 for TrackerID, TrackerData in dict(self.ActiveTrackers[self.CurrentStream]).items():
                     Alpha = min(1, max(0, np.e**((TrackerData[-2] - T)/(self.Tau / 1000))))
                     self.AddTrackerParts(TrackerID, TrackerData, Alpha)
-                self.UpdatedTrackers[self.CurrentStream] = []
+                self.UpdatedTrackers[self.CurrentStream].clear()
             else:
                 UpdateAlphas = (T - self.CurrentStreamLastUpdatedAlphasTs[self.CurrentStream] > self.Tau / 5000)
                 if UpdateAlphas:
@@ -484,7 +505,7 @@ class Display:
                             else:
                                 self.UpdateTrackerParts(TrackerID, TrackerData)
                                 self.UpdateTrackerAlpha(TrackerID, Alpha)
-                self.UpdatedTrackers[self.CurrentStream] = []
+                self.UpdatedTrackers[self.CurrentStream].clear()
         self.TrackersLabel['text'] = "{0}".format(len(self.ActiveTrackers[self.CurrentStream]))
 
     def UpdateTS(self):
@@ -578,7 +599,7 @@ class MainThreadClass(threading.Thread):
 
     def run(self):
         while self.Run:
-            data, addr = self.Connexion.recvfrom(1024)
+            data, addr = self.Connexion.recvfrom(2048)
             if b'kill' in data:
                 self.Run = False
             else:
@@ -588,20 +609,10 @@ class MainThreadClass(threading.Thread):
                 if SocketConcerned in self.Parent.Streams:
                     for Event in Update[1:]:
                         self.Parent.PreviousNEvents += 1
-                        self.Parent.StreamsMaps[SocketConcerned][Event[0], Event[1], Event[3]] = Event[2]
-                        if len(Event) > 4:
-                            self.ExtractAdditionalEventData(SocketConcerned, Event)
-                    self.Parent.StreamsTimes[SocketConcerned] = max(self.Parent.StreamsTimes[SocketConcerned], Update[-1][2])
+                        self.Parent._DecryptFullEvent(SocketConcerned, Event)
 
         self.Connexion.close()
         print("Main connexion closed")
-
-    def ExtractAdditionalEventData(self, SocketConcerned, EventData):
-        if EventData[4] == 1: # value for tracker event
-# Structure is [x, y, t, p, 1, ID, xTracker, yTracker, rTracker, sTracker, color, marker]
-            self.Parent.ActiveTrackers[SocketConcerned][EventData[5]] = EventData[-6:] + [EventData[2]] + [EventData[2]]
-            if EventData[5] not in self.Parent.UpdatedTrackers[SocketConcerned]:
-                self.Parent.UpdatedTrackers[SocketConcerned] += [EventData[5]]
 
 D = Display()
 
