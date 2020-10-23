@@ -93,7 +93,9 @@ class Display:
         TauFrame.pack(anchor = Tk.W)
 
         # Initialize Event specific features
-        self._EventDecryptFunctions = {}
+        def PassFunction(Socket, t, Data):
+            pass
+        self._EventDecryptFunctions = {i: PassFunction for i in range(10)}
         self._InitEventsVars()
         self._InitTrackerEventsVars()
 
@@ -107,6 +109,7 @@ class Display:
         self.DisplayImShow = self.DisplayAx.imshow(self.StreamsMaps['None'][:,:,0], vmin = 0, vmax = 1, origin = "lower", cmap = self.DisplayCMap)
         
         self.DisplayCanvas = FigureCanvasTkAgg(self.Display, self.DisplayFrame)
+        self.DisplayCanvas.mpl_connect('button_press_event', self.OnClick)
         self.DisplayCanvas.draw()
         self.DisplayCanvas.get_tk_widget().grid(row = 0, column = 0)
         
@@ -189,6 +192,10 @@ class Display:
         L.pack(anchor = Tk.W)
         self.EfficiencyLabel = Tk.Label(self.StreamInfoFrame)
         self.EfficiencyLabel.pack(anchor = Tk.W)
+        L = Tk.Label(self.StreamInfoFrame, text = "Point location :")
+        L.pack(anchor = Tk.W)
+        self.PointLabel = Tk.Label(self.StreamInfoFrame)
+        self.PointLabel.pack(anchor = Tk.W)
 
         self.TauLabel = Tk.Label(TauFrame, text = "Tau : {0} ms".format(self.Tau))
         self.TauLabel.grid(column = 0, row = 0)
@@ -256,6 +263,11 @@ class Display:
         self.ColorsMode = 1-self.ColorsMode
         self.ColorSelectionButton.configure(text = self.ColorsSelection[self.ColorsMode])
         self.DisplayImShow.set_clim(vmax = self.ColorsVMax[self.ColorsMode])
+
+    def OnClick(self, event):
+        if event.inaxes is None:
+            return
+        self.PointLabel['text'] = "x = {0}, y = {1}".format(int(event.xdata), int(event.ydata))
 
     def SwitchStream(self, var):
         if var != 0:
