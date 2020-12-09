@@ -1,7 +1,7 @@
 import numpy as np
 import socket
 import matplotlib
-import matplotlib.pyplot as pyl
+import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 import pickle
@@ -34,10 +34,280 @@ def KillDisplay(mainPort = 54242, questionPort = 54243, address = "localhost"):
     MainUDP.sendto(Main,MainAddress)
     MainUDP.close()
 
+class EventHandler:
+    Key = 1
+    DisplayType = "Map"
+    Name = "Events"
+    def __init__(self, Master, Display, Canvas, InfoFrame, OptionsFrame, SharedData):
+        self.Ax = Display
+        self.Canvas = Canvas
+        self.Active = ((self.Key == 1) or (self.DisplayType == "Dot"))
+        self.SharedData = SharedData
+        self.Reload = SharedData['ReloadCommand']
+
+        self.DisplayCMap = 'binary'
+        self.VMax = 2.
+        self.StreamsShapes = {}
+        self.StreamsMaps = {}
+
+        L = Tk.Label(InfoFrame, text = "Events shown:")
+        L.pack(anchor = Tk.W)
+        self.EventsLabel = Tk.Label(InfoFrame)
+        self.EventsLabel.pack(anchor = Tk.W)
+
+        PolaritiesFrame = Tk.Frame(OptionsFrame)
+        PolaritiesFrame.grid(row = 0, column = 0, sticky = Tk.W)
+
+        PolasModes = [("OFF", 0),
+                     ("ON", 1)]
+        self.DisplayedPolas = {Polarity: True for PolaName, Polarity in PolasModes}
+        self.DisplayedPolaritiesVars = []
+
+        PolaritiesButtons = []
+        for nPola, PolaParams in enumerate(PolasModes):
+            Text, Polarity = PolaParams
+            self.DisplayedPolaritiesVars += [Tk.IntVar(master = Master)]
+            self.DisplayedPolaritiesVars[-1].set(int(self.DisplayedPolas[Polarity]))
+            PolaritiesButtons += [Tk.Checkbutton(PolaritiesFrame, text = Text, variable = self.DisplayedPolaritiesVars[-1], command = lambda n=nPola, P=Polarity: self.SwitchDisplayedPolasOnOff(n,P))]
+            PolaritiesButtons[-1].grid(row = 0, column = nPola, sticky = Tk.N)
+        
+    def Decrypt(self, Socket, t, eventList):
+        self.StreamsMaps[Socket][eventList[0][0], eventList[0][1], eventList[1]] = t
+    def AddStreamVars(self, Name, Geometry):
+        self.StreamsShapes[Name] = Geometry
+        self.StreamsMaps[Name] = -10*np.ones(self.StreamsShapes[Name])
+    def DelStreamVars(self, Name):
+        del self.StreamsMaps[Name]
+        del self.StreamsShapes[Name]
+    def Update(self, Reload = False):
+        CurrentStream = self.SharedData['CurrentStream']
+        if self.Active:
+            Map = np.zeros(self.StreamsShapes[CurrentStream][:2])
+            StreamMap = self.StreamsMaps[CurrentStream]
+            StreamTime = self.SharedData['t']
+            for Polarity, IsActive in self.DisplayedPolas.items():
+                if IsActive:
+                    Map = (Map + ((StreamTime - StreamMap[:,:,Polarity]) < self.SharedData['Tau'])) #For color mode
+
+            if Reload:
+                self.DisplayImShow = self.Ax.imshow(np.transpose(Map), vmin = 0, vmax = self.VMax, origin = "lower", cmap = self.DisplayCMap)
+                self.Ax.set_xlim(-0.5, self.StreamsShapes[CurrentStream][0]-0.5)
+                self.Ax.set_ylim(-0.5, self.StreamsShapes[CurrentStream][1]-0.5)
+            else:
+                self.DisplayImShow.set_data(np.transpose(Map))
+            self.EventsLabel['text'] = "{0}".format(int(Map.sum()))
+        else:
+            if Reload:
+                self.EventsLabel['text'] = "0"
+
+    def SwitchDisplayedPolasOnOff(self, nPola, Polarity):
+        if self.DisplayedPolaritiesVars[nPola].get():
+            self.DisplayedPolas[Polarity] = True
+        else:
+            self.DisplayedPolas[Polarity] = False
+        self.Reload()
+
+class DisparityHandler:
+    Key = 3
+    DisplayType = "Map"
+    Name = "Disparities"
+    def __init__(self, Master, Display, Canvas, InfoFrame, OptionsFrame, SharedData):
+        self.Ax = Display
+        self.Canvas = Canvas
+        self.Active = ((self.Key == 1) or (self.DisplayType == "Dot"))
+        self.SharedData = SharedData
+        self.Reload = SharedData['ReloadCommand']
+
+        self.MaxDisparity = 30
+        self.DisparitiesMaps = {}
+        self.StreamsShapes = {}
+
+        L = Tk.Label(InfoFrame, text = "Disparities shown:")
+        L.grid(row = 0, column = 0, sticky = Tk.NW)
+        self.EventsLabel = Tk.Label(InfoFrame)
+        self.EventsLabel.grid(row = 0, column = 1, sticky = Tk.NW)
+        self.EventsLabel['text'] = "0"
+
+        CBFig = Figure(figsize=(4,0.5), dpi=60)
+        CBFig.subplots_adjust(bottom=0.5)
+        self.CBCanvas = FigureCanvasTkAgg(CBFig, InfoFrame)
+        CBFig.tight_layout()
+        self.CBCanvas.get_tk_widget().grid(row = 1, column = 0, columnspan = 2, sticky = Tk.NW)
+
+        self.CBAx = CBFig.add_subplot(111)
+        self.DrawColorbar()
+
+        self.DisparityLabel = Tk.Label(OptionsFrame, text = "Max Disparity : {0}".format(self.MaxDisparity))
+        self.DisparityLabel.grid(column = 0, row = 0)
+        DMinusButton = Tk.Button(OptionsFrame, text = ' - ', command = lambda: self.ChangeD(-1))
+        DMinusButton.grid(column = 1, row = 0)
+        DPlusButton = Tk.Button(OptionsFrame, text = ' + ', command = lambda: self.ChangeD(+1))
+        DPlusButton.grid(column = 2, row = 0)
+
+    def AddStreamVars(self, Name, Geometry):
+        self.StreamsShapes[Name] = Geometry
+        self.DisparitiesMaps[Name] = np.zeros(tuple(Geometry[:2]) + (2,))
+
+    def Decrypt(self, Socket, t, eventList):
+        self.DisparitiesMaps[Socket][eventList[1][0], eventList[1][1], :] = [eventList[0], t]
+
+    def DelStreamVars(self, Name):
+        del self.DisparitiesMaps[Name]
+        del self.StreamsShapes[Name]
+
+    def Update(self, Reload = False):
+        if self.Active:
+            CurrentStream = self.SharedData['CurrentStream']
+            Tau = self.SharedData['Tau']
+            DispMap = self.DisparitiesMaps[CurrentStream]
+            StreamTime = self.SharedData['t']
+            Map = DispMap[:,:,0] * ((StreamTime - DispMap[:,:,1]) < Tau)
+
+            if Reload:
+                self.DisplayImShow = self.Ax.imshow(np.transpose(Map), vmin = 0, vmax = self.MaxDisparity, origin = "lower", cmap = 'hot')
+                self.Ax.set_xlim(-0.5, self.StreamsShapes[CurrentStream][0]-0.5)
+                self.Ax.set_ylim(-0.5, self.StreamsShapes[CurrentStream][1]-0.5)
+            else:
+                self.DisplayImShow.set_data(np.transpose(Map))
+            self.EventsLabel['text'] = "{0}".format(int(Map.sum()))
+            self.Canvas.draw()
+        else:
+            if Reload:
+                self.EventsLabel['text'] = "0"
+
+    def ChangeD(self, var):
+        self.MaxDisparity = max(5, self.MaxDisparity + var * 5)
+        self.DisparityLabel['text'] = "Max Disparity : {0}".format(self.MaxDisparity)
+        if self.Active:
+            self.DisplayImShow.set_clim((0, self.MaxDisparity))
+        self.DrawColorbar()
+
+    def DrawColorbar(self):
+        self.CBAx.cla()
+        norm = matplotlib.colors.Normalize(vmin=0, vmax=self.MaxDisparity)
+
+        self.CB = matplotlib.colorbar.ColorbarBase(self.CBAx, cmap=plt.cm.hot,
+                                norm=norm,
+                                orientation='horizontal')
+        self.CBCanvas.draw()
+
+class TrackerHandler:
+    Key = 2
+    DisplayType = "Dot"
+    Name = "Trackers"
+    def __init__(self, Master, Display, Canvas, InfoFrame, OptionsFrame, SharedData):
+        self.Ax = Display
+        self.Canvas = Canvas
+        self.Active = ((self.Key == 1) or (self.DisplayType == "Dot"))
+        self.SharedData = SharedData
+        self.Reload = SharedData['ReloadCommand']
+
+        self.TrackersScalingSize = 20
+        self.ActiveTrackers = {'None': {}}
+        self.UpdatedTrackers = {}
+        self.DisplayedTrackers = {}
+        self.DisplayedTrackersIDs = {}
+        self.CurrentStreamLastUpdatedAlphasTs = {}
+        L = Tk.Label(InfoFrame, text = "Active trackers :")
+        L.pack(anchor = Tk.W)
+        self.TrackersLabel = Tk.Label(InfoFrame)
+        self.TrackersLabel.pack(anchor = Tk.W)
+        
+    def Decrypt(self, Socket, t, eventList):
+        ID = eventList.pop(1)
+        self.ActiveTrackers[Socket][ID] = eventList + [t,t]
+        self.UpdatedTrackers[Socket].add(ID)
+    def AddStreamVars(self, Name, Geometry):
+        self.ActiveTrackers[Name] = {}
+        self.UpdatedTrackers[Name] = set()
+        self.CurrentStreamLastUpdatedAlphasTs[Name] = -np.inf
+    def DelStreamVars(self, Name):
+        del self.ActiveTrackers[Name]
+        del self.UpdatedTrackers[Name]
+        del self.CurrentStreamLastUpdatedAlphasTs[Name]
+    
+    def AddTrackerParts(self, TrackerID, TrackerData, Alpha):
+        self.DisplayedTrackers[TrackerID] = [None, None]
+        self.DisplayedTrackers[TrackerID][0] = self.Ax.plot(TrackerData[0][0], TrackerData[0][1], color = TrackerData[3], marker = TrackerData[4], alpha = Alpha)[0]
+        Theta, S = TrackerData[1], TrackerData[2]
+        dx, dy = self.TrackersScalingSize * S * np.cos(Theta), self.TrackersScalingSize * S * np.sin(Theta)
+        self.DisplayedTrackers[TrackerID][1] = self.Ax.plot([TrackerData[0][0], TrackerData[0][0]+dx], [TrackerData[0][1], TrackerData[0][1]+dy], color = TrackerData[3], alpha = Alpha)[0]
+        self.DisplayedTrackersIDs[TrackerID] = self.Ax.text(TrackerData[0][0] + 5, TrackerData[0][1], str(TrackerID), color = TrackerData[3], alpha = Alpha)
+
+    def UpdateTrackerParts(self, TrackerID, TrackerData):
+        self.DisplayedTrackers[TrackerID][0].set_data(TrackerData[0][0], TrackerData[0][1])
+        self.DisplayedTrackers[TrackerID][0].set_color(TrackerData[3])
+        self.DisplayedTrackers[TrackerID][0].set_marker(TrackerData[4])
+        Theta, S = TrackerData[1], TrackerData[2]
+        dx, dy = self.TrackersScalingSize * S * np.cos(Theta), self.TrackersScalingSize * S * np.sin(Theta)
+        self.DisplayedTrackers[TrackerID][1].set_data([TrackerData[0][0], TrackerData[0][0]+dx], [TrackerData[0][1], TrackerData[0][1]+dy])
+        self.DisplayedTrackers[TrackerID][1].set_color(TrackerData[3])
+        self.DisplayedTrackersIDs[TrackerID].set_x(TrackerData[0][0] + 5)
+        self.DisplayedTrackersIDs[TrackerID].set_y(TrackerData[0][1])
+        self.DisplayedTrackersIDs[TrackerID].set_color(TrackerData[3])
+
+    def UpdateTrackerAlpha(self, TrackerID, Alpha):
+        self.DisplayedTrackers[TrackerID][0].set_alpha(Alpha)
+        self.DisplayedTrackers[TrackerID][1].set_alpha(Alpha)
+        self.DisplayedTrackersIDs[TrackerID].set_alpha(Alpha)
+    def RemoveTrackerParts(self, TrackerID):
+        for Part in self.DisplayedTrackers[TrackerID]:
+            Part.remove()
+        self.DisplayedTrackersIDs[TrackerID].remove()
+        del self.DisplayedTrackers[TrackerID]
+        del self.DisplayedTrackersIDs[TrackerID]
+
+    def Update(self, Reload = False):
+        CurrentStream = self.SharedData['CurrentStream']
+        Tau = self.SharedData['Tau']
+        if self.Active:
+            T = self.SharedData['t']
+            if Reload:
+                self.DisplayedTrackers = {}
+                self.DisplayedTrackersIDs = {}
+                for TrackerID, TrackerData in dict(self.ActiveTrackers[CurrentStream]).items():
+                    Alpha = min(1, max(0, np.e**((TrackerData[-2] - T)/Tau)))
+                    self.AddTrackerParts(TrackerID, TrackerData, Alpha)
+                self.UpdatedTrackers[CurrentStream].clear()
+            else:
+                UpdateAlphas = (T - self.CurrentStreamLastUpdatedAlphasTs[CurrentStream] > Tau / 5)
+                if UpdateAlphas:
+                    self.CurrentStreamLastUpdatedAlphasTs[CurrentStream] = T
+                    for TrackerID in list(self.DisplayedTrackers.keys()):
+                        TrackerData = self.ActiveTrackers[CurrentStream][TrackerID]
+                        Alpha = min(1, max(0, np.e**((TrackerData[-2] - T)/Tau)))
+                        if Alpha < 0.001:
+                            self.RemoveTrackerParts(TrackerID)
+                            continue
+                        if TrackerID in self.UpdatedTrackers[CurrentStream]:
+                            if TrackerID not in self.DisplayedTrackers.keys():
+                                self.AddTrackerParts(TrackerID, TrackerData, Alpha)
+                            else:
+                                self.UpdateTrackerParts(TrackerID, TrackerData)
+                            self.UpdateTrackerAlpha(TrackerID, Alpha)
+                else:
+                    for TrackerID in list(self.UpdatedTrackers[CurrentStream]):
+                        TrackerData = self.ActiveTrackers[CurrentStream][TrackerID]
+                        Alpha = min(1, max(0, np.e**((TrackerData[-2] - T)/Tau)))
+                        if TrackerID not in self.DisplayedTrackers.keys():
+                            self.AddTrackerParts(TrackerID, TrackerData, Alpha)
+                        else:
+                            if Alpha < 0.001:
+                                self.RemoveTrackerParts(TrackerID)
+                            else:
+                                self.UpdateTrackerParts(TrackerID, TrackerData)
+                                self.UpdateTrackerAlpha(TrackerID, Alpha)
+                self.UpdatedTrackers[CurrentStream].clear()
+        self.TrackersLabel['text'] = "{0}".format(len(self.ActiveTrackers[CurrentStream]))
+
+
+_HANDLERS = [EventHandler, TrackerHandler, DisparityHandler]
+
 class Display:
+    _DefaultTau = 0.030
     def __init__(self, mainPort = 54242, questionPort = 54243, responsePort = 54244, listen = "", responseAddress = 'localhost'):
-        self.Tau = 30 #in ms
-        self.dTau = 5
+        self.SharedData = {'t':0, 'Tau':self._DefaultTau, 'Stream':None, 'ReloadCommand': self.Reload}
+        self.dTau = 0.005
         self.PreviousTime = 0.
         self.PreviousNEvents = 0
 	
@@ -50,20 +320,16 @@ class Display:
         self.ResponseSocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         ResponseAddress = ("localhost", responsePort)
 
-        self.QuestionThread = QuestionThreadClass(self, self.QuestionSocket)
-        self.QuestionThread.start()
-
-        self.ResponseBot = ResponseBotClass(self, self.ResponseSocket, ResponseAddress)
-
         self.CurrentlyDisplayedStreams = []
         self.Streams = []
         self.StreamsTypes = {}
         self.LastTSAtRTDUpdate = {}
         self.StreamsInfos = {}
+        self.StreamsTaus = {}
         self.StreamsTimes = {}
 
         self.ReloadNames = False
-        self.ReloadMap = False
+        self.ReloadMap = True
         
         self.MainWindow = Tk.Tk()
         self.MainWindow.title('Projector')
@@ -72,16 +338,17 @@ class Display:
         self.DisplayFrame.grid(row = 0, column = 0, rowspan = 8)
 
         self.RTFrame = Tk.Frame(self.MainWindow)
-        self.RTFrame.grid(row = 0, column = 2, rowspan = 2)
+        self.RTFrame.grid(row = 0, column = 2, rowspan = 2, sticky = Tk.NW)
 
-        self.EventSpecificFrame = Tk.Frame(self.MainWindow)
-        self.EventSpecificFrame.grid(row = 1, column = 1, sticky = Tk.W)
-
-        self.PolaritiesFrame = Tk.Frame(self.MainWindow)
-        self.PolaritiesFrame.grid(row = 2, column = 1, sticky = Tk.W)
+        self.HandlersInfoFrame = Tk.Frame(self.MainWindow)
+        self.HandlersInfoFrame.grid(row = 1, column = 1, columnspan = 2, sticky = Tk.W)
+        self.HandlersMapInfoFrame = Tk.Frame(self.HandlersInfoFrame)
+        self.HandlersMapInfoFrame.pack(anchor = Tk.W)
+        self.HandlersDotInfoFrame = Tk.Frame(self.HandlersInfoFrame)
+        self.HandlersDotInfoFrame.pack(anchor = Tk.W)
 
         self.DisplayedTypesFrame = Tk.Frame(self.MainWindow)
-        self.DisplayedTypesFrame.grid(row = 3, column = 1, sticky = Tk.W)
+        self.DisplayedTypesFrame.grid(row = 3, column = 1, columnspan = 2, sticky = Tk.EW)
 
         self.StreamsFrame = Tk.Frame(self.MainWindow)
         self.StreamsFrame.grid(row = 4, column = 1, columnspan = 2, sticky = Tk.W)
@@ -92,26 +359,51 @@ class Display:
         TauFrame = Tk.Frame(self.StreamInfoFrame)
         TauFrame.pack(anchor = Tk.W)
 
-        # Initialize Event specific features
-        def PassFunction(Socket, t, Data):
-            pass
-        self._EventDecryptFunctions = {i: PassFunction for i in range(10)}
-        self._InitEventsVars()
-        self._InitTrackerEventsVars()
+        self.Display = Figure(figsize=(7,7), dpi=150)
+        self.DisplayAx = self.Display.add_subplot(111)
+
+        L = Tk.Label(self.DisplayedTypesFrame, text = "Display selection :")
+        L.grid(row = 0, column = 0, sticky = Tk.W)
+
+        self.DisplayedTypesMapFrame = Tk.Frame(self.DisplayedTypesFrame, borderwidth = 1, relief=Tk.SOLID)
+        self.DisplayedTypesMapFrame.grid(row = 1, column = 0, sticky = Tk.EW)
+        self.DisplayedTypesDotFrame = Tk.Frame(self.DisplayedTypesFrame,  borderwidth = 1, relief=Tk.SOLID)
+        self.DisplayedTypesDotFrame.grid(row = 2, column = 0, sticky = Tk.EW)
+        self.DisplayedTypesVars = {}
+        self.DisplayedMapTypeVar = Tk.IntVar(master = self.MainWindow)
+        self.DisplayedMapTypeVar.set(1)
+        self.Handlers = {}
+        HandlersRows = {"Map":0, "Dot":0}
+        for nType, Handler in enumerate(_HANDLERS):
+            if Handler.DisplayType == "Dot":
+                HandlerFrame = self.DisplayedTypesDotFrame
+                HandlerInfoFrame = self.HandlersDotInfoFrame
+                self.DisplayedTypesVars[Handler.Key] = Tk.IntVar(master = self.MainWindow)
+                self.DisplayedTypesVars[Handler.Key].set(1)
+                Button = Tk.Checkbutton(HandlerFrame, text = Handler.Name, variable = self.DisplayedTypesVars[Handler.Key], command = lambda E=Handler.Key: self.SwitchDisplayedTypeOnOff(E))
+            elif Handler.DisplayType == "Map":
+                HandlerFrame = self.DisplayedTypesMapFrame
+                HandlerInfoFrame = self.HandlersMapInfoFrame
+                Button = Tk.Radiobutton(HandlerFrame, text = Handler.Name, variable = self.DisplayedMapTypeVar, value = Handler.Key, command = self.SwitchDisplayedMapType)
+            else:
+                raise Exception("Ill defined handler")
+            Button.grid(row = HandlersRows[Handler.DisplayType], column = 0, sticky = Tk.W)
+            HandlerOptionsFrame = Tk.Frame(HandlerFrame)
+            HandlerOptionsFrame.grid(row = HandlersRows[Handler.DisplayType], column = 1, sticky = Tk.W)
+            HandlersRows[Handler.DisplayType] += 1
+
+            HandlerInfoFrame = Tk.Frame(HandlerInfoFrame)
+            HandlerInfoFrame.pack(anchor = Tk.W)
+            self.Handlers[Handler.Key] = Handler(self.MainWindow, self.DisplayAx, self.Display.canvas, HandlerInfoFrame, HandlerOptionsFrame, self.SharedData)
 
         self.StreamsVariable = Tk.IntVar(master = self.MainWindow)
         self._MinimumGeometry = np.array([10, 10, 2])
         self.AddStream('None', self._MinimumGeometry)
 
-        self.Display = Figure(figsize=(7,7), dpi=150)
-        self.DisplayAx = self.Display.add_subplot(111)
-        self.DisplayCMap = 'binary'
-        self.DisplayImShow = self.DisplayAx.imshow(self.StreamsMaps['None'][:,:,0], vmin = 0, vmax = 1, origin = "lower", cmap = self.DisplayCMap)
-        
-        self.DisplayCanvas = FigureCanvasTkAgg(self.Display, self.DisplayFrame)
-        self.DisplayCanvas.mpl_connect('button_press_event', self.OnClick)
-        self.DisplayCanvas.draw()
-        self.DisplayCanvas.get_tk_widget().grid(row = 0, column = 0)
+        DisplayCanvas = FigureCanvasTkAgg(self.Display, self.DisplayFrame)
+        DisplayCanvas.mpl_connect('button_press_event', self.OnClick)
+        DisplayCanvas.draw()
+        DisplayCanvas.get_tk_widget().grid(row = 0, column = 0)
         
         self.RTMinLim = 10**-4
         self.RTMaxLim = 10**1
@@ -131,58 +423,20 @@ class Display:
         self.RTRectangle.set_color(self.RTDColors[max(min(int(10 * (np.log10(self.CurrentRTValue) + 4) / 5), 9), 0)])
         self.RealTimeDisplayAx.add_patch(self.RTRectangle)
 
-        self.RTDisplayCanvas = FigureCanvasTkAgg(self.RealTimeDisplay, self.RTFrame)
-        self.RTDisplayCanvas.draw()
+        RTDisplayCanvas = FigureCanvasTkAgg(self.RealTimeDisplay, self.RTFrame)
+        RTDisplayCanvas.draw()
         self.RealTimeDisplay.tight_layout()
-        self.RTDisplayCanvas.get_tk_widget().grid(row = 0, column = 0)
+        RTDisplayCanvas.get_tk_widget().grid(row = 0, column = 0, sticky = Tk.NW)
 
         self.FPSValue = 0.
         self.FPSLabel = Tk.Label(self.RTFrame, text = "FPS : {0}".format(0))
-        self.FPSLabel.grid(row = 1, column = 0)
-        
-        self.ColorsSelection = ['Single color', 'Rainbow mode']
-        self.ColorsVMax = [1., 2.]
-        self.ColorsMode = 1
-        self.ColorSelectionButton = Tk.Button(self.PolaritiesFrame, text = self.ColorsSelection[self.ColorsMode], command = self.ChangeColorMode)
-        self.ColorSelectionButton.pack(anchor = Tk.W)
-
-        L = Tk.Label(self.PolaritiesFrame, text = "Polarities selection :")
-        L.pack(anchor = Tk.W)
-        PolasModes = [("OFF", 0),
-                     ("ON", 1)]
-        self.DisplayedPolas = {Polarity: True for PolaName, Polarity in PolasModes}
-        self.DisplayedPolaritiesVars = []
-
-        self.PolaritiesButtons = []
-        for nPola, PolaParams in enumerate(PolasModes):
-            Text, Polarity = PolaParams
-            self.DisplayedPolaritiesVars += [Tk.IntVar(master = self.MainWindow)]
-            self.DisplayedPolaritiesVars[-1].set(int(self.DisplayedPolas[Polarity]))
-            self.PolaritiesButtons += [Tk.Checkbutton(self.PolaritiesFrame, text = Text, variable = self.DisplayedPolaritiesVars[-1], command = lambda n=nPola, P=Polarity: self.SwitchDisplayedPolasOnOff(n,P))]
-            self.PolaritiesButtons[-1].pack(anchor = Tk.W)
-
-        L = Tk.Label(self.DisplayedTypesFrame, text = "Display selection :")
-        L.pack(anchor = Tk.W)
-        DisplayedTypes = [("Events", 0),
-                     ("Trackers", 1)]
-        self.UpdateEventTypeMethods = {0:self.UpdateEvents, 1:self.UpdateTrackerEvents}
-
-        self.DisplayedTypes = {EventType: True for EventName, EventType in DisplayedTypes}
-        self.DisplayedTypesVars = []
-
-        self.DisplayedTypesButtons = []
-        for nType, EventParams in enumerate(DisplayedTypes):
-            Text, EventType = EventParams
-            self.DisplayedTypesVars += [Tk.IntVar(master = self.MainWindow)]
-            self.DisplayedTypesVars[-1].set(int(self.DisplayedTypes[EventType]))
-            self.DisplayedTypesButtons += [Tk.Checkbutton(self.DisplayedTypesFrame, text = Text, variable = self.DisplayedTypesVars[-1], command = lambda n=nType, E=EventType: self.SwitchDisplayedTypeOnOff(n,E))]
-            self.DisplayedTypesButtons[-1].pack(anchor = Tk.W)
+        self.FPSLabel.grid(row = 1, column = 0, sticky = Tk.NW)
 
         L = Tk.Label(self.StreamsFrame, text = "Streams selection :")
         L.pack(anchor = Tk.W)
         self.StreamsButtons = {'None': Tk.Radiobutton(self.StreamsFrame, text = self.StreamsInfos['None'], variable = self.StreamsVariable, value = 0, command = lambda:self.SwitchStream(0))}
         self.StreamsButtons['None'].pack(anchor = Tk.W)
-        self.CurrentStream = self.Streams[self.StreamsVariable.get()]
+        self.SharedData['CurrentStream'] = self.Streams[self.StreamsVariable.get()]
 
         L = Tk.Label(self.StreamInfoFrame, text = "Current Timestamp :")
         L.pack(anchor = Tk.W)
@@ -197,13 +451,13 @@ class Display:
         self.PointLabel = Tk.Label(self.StreamInfoFrame)
         self.PointLabel.pack(anchor = Tk.W)
 
-        self.TauLabel = Tk.Label(TauFrame, text = "Tau : {0} ms".format(self.Tau))
+        self.TauLabel = Tk.Label(TauFrame, text = "Tau : {0} ms".format(int(1000*self.Tau)))
         self.TauLabel.grid(column = 0, row = 0)
         TauMinusButton = Tk.Button(TauFrame, text = ' - ', command = lambda: self.ChangeTau(-1))
         TauMinusButton.grid(column = 1, row = 0)
         TauPlusButton = Tk.Button(TauFrame, text = ' + ', command = lambda: self.ChangeTau(+1))
         TauPlusButton.grid(column = 2, row = 0)
-        self.dTauLabel = Tk.Label(TauFrame, text = "dTau : {0:.2f} ms".format(self.dTau))
+        self.dTauLabel = Tk.Label(TauFrame, text = "dTau : {0:.2f} ms".format(int(1000*self.dTau)))
         self.dTauLabel.grid(column = 0, row = 1)
         dTauDivideButton = Tk.Button(TauFrame, text = ' /2 ', command = lambda: self.ChangedTau(-1))
         dTauDivideButton.grid(column = 1, row = 1)
@@ -218,9 +472,6 @@ class Display:
         self.MainWindow.bind('<KP_0>', lambda event: self.SwitchDisplayedPolasOnOff(0,0))
         self.MainWindow.bind('<KP_1>', lambda event: self.SwitchDisplayedPolasOnOff(1,1))
         self.MainWindow.bind('<KP_2>', lambda event: self.SetPolasMode(2))
-        self.MainWindow.bind('<e>', lambda event: self.SetDisplayMode(0))
-        self.MainWindow.bind('<s>', lambda event: self.SetDisplayMode(1))
-        self.MainWindow.bind('<b>', lambda event: self.SetDisplayMode(2))
         self.MainWindow.bind('<Down>', lambda event: self.SwitchStream(+1))
         self.MainWindow.bind('<Up>', lambda event: self.SwitchStream(-1))
         self.MainWindow.bind('<c>', lambda event: self.ChangeColorMode())
@@ -228,6 +479,12 @@ class Display:
 
         ClearStreamsButton = Tk.Button(self.MainWindow, text='Clear', command = self.ClearStreams)
         ClearStreamsButton.grid(row = 5, column = 1, sticky = Tk.W)
+
+
+        self.QuestionThread = QuestionThreadClass(self, self.QuestionSocket)
+        self.QuestionThread.start()
+
+        self.ResponseBot = ResponseBotClass(self, self.ResponseSocket, ResponseAddress)
 
         self.MainThread = MainThreadClass(self, self.MainSocket)
         self.MainThread.start()
@@ -238,31 +495,36 @@ class Display:
         self.UpdateRTD()
         self.MainWindow.mainloop()
 
+    @property
+    def Tau(self):
+        return self.SharedData['Tau']
+    @property
+    def CurrentStream(self):
+        return self.SharedData['CurrentStream']
+
     def AddStream(self, Name, Geometry, StreamInfo = "No display", StreamType = 'Stream'):
         Geometry = np.maximum(Geometry, self._MinimumGeometry)
         self.Streams += [Name]
         self.StreamsTypes[Name] = StreamType
         self.StreamsTimes[Name] = 0
+        self.StreamsTaus[Name] = self._DefaultTau
         self.LastTSAtRTDUpdate[Name] = 0
         self.StreamsInfos[Name] = StreamInfo
-        self.AddEventsStreamVars(Name, Geometry)
-        self.AddTrackersStreamVars(Name, Geometry)
+
+        for Handler in self.Handlers.values():
+            Handler.AddStreamVars(Name, Geometry)
 
     def RemoveStream(self, Name):
         del self.StreamsTimes[Name]
         del self.LastTSAtRTDUpdate[Name]
         del self.StreamsInfos[Name]
         del self.StreamsTypes[Name]
-        self.RemoveEventsStreamVars(Name)
-        self.RemoveTrackersStreamVars(Name)
+        del self.StreamsTaus[Name]
+        for Handler in self.Handlers.values():
+            Handler.DelStreamVars(Name)
         self.CurrentlyDisplayedStreams.remove(Name)
         self.Streams.remove(Name)
-        self.CurrentStream = self.Streams[-1]
-
-    def ChangeColorMode(self):
-        self.ColorsMode = 1-self.ColorsMode
-        self.ColorSelectionButton.configure(text = self.ColorsSelection[self.ColorsMode])
-        self.DisplayImShow.set_clim(vmax = self.ColorsVMax[self.ColorsMode])
+        self.SharedData['CurrentStream'] = self.Streams[-1]
 
     def OnClick(self, event):
         if event.inaxes is None:
@@ -274,18 +536,15 @@ class Display:
             self.StreamsVariable.set(min(max(self.StreamsVariable.get() + var, 0), len(self.Streams)-1))
         self.Reload()
 
-    def SwitchDisplayedTypeOnOff(self, nType, EventType):
-        if self.DisplayedTypesVars[nType].get():
-            self.DisplayedTypes[EventType] = True
-        else:
-            self.DisplayedTypes[EventType] = False
+    def SwitchDisplayedMapType(self):
+        NewValue = self.DisplayedMapTypeVar.get()
+        for Handler in self.Handlers.values():
+            if Handler.DisplayType == "Map":
+                Handler.Active = (Handler.Key == NewValue)
         self.Reload()
 
-    def SwitchDisplayedPolasOnOff(self, nPola, Polarity):
-        if self.DisplayedPolaritiesVars[nPola].get():
-            self.DisplayedPolas[Polarity] = True
-        else:
-            self.DisplayedPolas[Polarity] = False
+    def SwitchDisplayedTypeOnOff(self, EventKey):
+        self.Handlers[EventKey].Active = bool(self.DisplayedTypesVars[EventKey].get())
         self.Reload()
 
     def ClearStreams(self):
@@ -316,18 +575,22 @@ class Display:
         self.MainWindow.after(100, self.UpdateStreamsList)
 
     def ChangeTau(self, var):
-        self.Tau = max(self.dTau, self.Tau + var * self.dTau)
-        self.TauLabel['text'] = "Tau : {0} ms".format(self.Tau)
+        self.StreamsTaus[self.CurrentStream] = max(self.dTau, self.Tau + var * self.dTau)
+        self.UpdateTauDisplayed()
 
     def ChangedTau(self, var):
         self.dTau *= 2**var
-        self.dTauLabel['text'] = "dTau : {0:.2f} ms".format(self.dTau)
+        self.dTauLabel['text'] = "dTau : {0:.1f} ms".format(int(1000*self.dTau))
+
+    def UpdateTauDisplayed(self):
+        self.SharedData['Tau'] = self.StreamsTaus[self.CurrentStream]
+        self.TauLabel['text'] = "Tau : {0} ms".format(int(1000*self.Tau))
 
     def printPolaritiesVariable(self):
         print(self.PolaritiesVariable.get())
 
     def Reload(self):
-        self.CurrentStream = self.Streams[self.StreamsVariable.get()]
+        self.SharedData['CurrentStream'] = self.Streams[self.StreamsVariable.get()]
         self.ReloadMap = True
 
     def _on_closing(self):
@@ -342,7 +605,7 @@ class Display:
     def UpdateRTD(self):
         TimeEllapsed = self.StreamsTimes[self.CurrentStream] - self.LastTSAtRTDUpdate[self.CurrentStream]
         self.LastTSAtRTDUpdate[self.CurrentStream] = self.StreamsTimes[self.CurrentStream]
-        self.CurrentRTValue = max(self.RTMinLim, 1000 * TimeEllapsed / self.UpdateRTDTimeConstant)
+        self.CurrentRTValue = max(self.RTMinLim, TimeEllapsed / self.UpdateRTDTimeConstant)
 
         LogValue = np.log10(self.CurrentRTValue)
         self.RTRectangle.set_color(self.RTDColors[max(min(int(10 * (LogValue + 4) / 5), 9), 0)])
@@ -355,9 +618,11 @@ class Display:
     def UpdateScene(self):
         if self.ReloadMap:
             self.DisplayAx.clear()
-        for EventType, IsActive in self.DisplayedTypes.items():
-            self.UpdateEventTypeMethods[EventType](IsActive)
+        self.SharedData['t'] = self.StreamsTimes[self.CurrentStream]
+        for Handler in self.Handlers.values():
+            Handler.Update(self.ReloadMap)
 
+        self.Display.canvas.draw()
         self.ReloadMap = False
 
         t = time.time()
@@ -372,154 +637,15 @@ class Display:
         t = eventList[1]
         self.StreamsTimes[Socket] = max(self.StreamsTimes[Socket], t)
         for Extension in eventList[2:]:
-            self._EventDecryptFunctions[Extension[0]](Socket, t, Extension[1:])
+            self.Handlers[Extension[0]].Decrypt(Socket, t, Extension[1:])
 
-    def _InitEventsVars(self):
-        self.StreamsShapes = {}
-        self.StreamsMaps = {}
-        L = Tk.Label(self.EventSpecificFrame, text = "Currently displayed events :")
-        L.pack(anchor = Tk.W)
-        self.EventsLabel = Tk.Label(self.EventSpecificFrame)
-        self.EventsLabel.pack(anchor = Tk.W)
-        self._EventDecryptFunctions[1] = self._DecryptEvent
+    def _InitTauEventsVars(self):
+        self._EventDecryptFunctions[5] = self._DecryptTauEvent
 
-    def _DecryptEvent(self, Socket, t, eventList):
-        self.StreamsMaps[Socket][eventList[0][0], eventList[0][1], eventList[1]] = t
-
-    def AddEventsStreamVars(self, Name, Geometry):
-        self.StreamsShapes[Name] = Geometry
-        self.StreamsMaps[Name] = -10*np.ones(self.StreamsShapes[Name])
-    def RemoveEventsStreamVars(self, Name):
-        del self.StreamsMaps[Name]
-        del self.StreamsShapes[Name]
-
-    def UpdateEvents(self, ActiveType):
-        if ActiveType:
-            Map = np.zeros(self.StreamsShapes[self.CurrentStream][:2])
-            StreamMap = self.StreamsMaps[self.CurrentStream]
-            StreamTime = self.StreamsTimes[self.CurrentStream]
-            for Polarity, IsActive in self.DisplayedPolas.items():
-                if IsActive:
-                    Map = (Map + ((StreamTime - StreamMap[:,:,Polarity]) < self.Tau/1000.)) #For color mode
-
-            if self.ReloadMap:
-                self.DisplayImShow = self.DisplayAx.imshow(np.transpose(Map), vmin = 0, vmax = self.ColorsVMax[self.ColorsMode], origin = "lower", cmap = self.DisplayCMap)
-                self.DisplayAx.set_xlim(0, self.StreamsShapes[self.CurrentStream][0])
-                self.DisplayAx.set_ylim(0, self.StreamsShapes[self.CurrentStream][1])
-            else:
-                self.DisplayImShow.set_data(np.transpose(Map))
-            self.EventsLabel['text'] = "{0}".format(int(Map.sum()))
-            self.Display.canvas.draw()
-        elif self.ReloadMap:
-            Map = np.zeros(self.StreamsShapes[self.CurrentStream][:2])
-            self.EventsLabel['text'] = "0"
-            Map[0,0] = 1
-            self.DisplayImShow = self.DisplayAx.imshow(np.transpose(Map), vmin = 0, vmax = 1., origin = "lower", cmap = self.DisplayCMap)
-            self.Display.canvas.draw()
-
-    def _InitTrackerEventsVars(self):
-        self.TrackersScalingSize = 20
-        self.ActiveTrackers = {'None': {}}
-        self.UpdatedTrackers = {}
-        self.DisplayedTrackers = {}
-        self.DisplayedTrackersIDs = {}
-        self.CurrentStreamLastUpdatedAlphasTs = {}
-        L = Tk.Label(self.EventSpecificFrame, text = "Active trackers :")
-        L.pack(anchor = Tk.W)
-        self.TrackersLabel = Tk.Label(self.EventSpecificFrame)
-        self.TrackersLabel.pack(anchor = Tk.W)
-        self._EventDecryptFunctions[2] = self._DecryptTrackerEvent
-
-    def _DecryptTrackerEvent(self, Socket, t, eventList):
-# Structure is [x, y, t, p, 1, ID, xTracker, yTracker, rTracker, sTracker, color, marker]
-# Structure is [Location, ID, Angle, Scaling, Color, Marker]
-        ID = eventList.pop(1)
-        self.ActiveTrackers[Socket][ID] = eventList + [t,t]
-        self.UpdatedTrackers[Socket].add(ID)
-
-    def AddTrackersStreamVars(self, Name, Geometry):
-        self.ActiveTrackers[Name] = {}
-        self.UpdatedTrackers[Name] = set()
-        self.CurrentStreamLastUpdatedAlphasTs[Name] = -np.inf
-    def RemoveTrackersStreamVars(self, Name):
-        del self.ActiveTrackers[Name]
-        del self.UpdatedTrackers[Name]
-        del self.CurrentStreamLastUpdatedAlphasTs[Name]
-        #for TrackerID in list(self.DisplayedTrackers.keys()):
-        #    self.RemoveTrackerParts(TrackerID)
-    
-    def AddTrackerParts(self, TrackerID, TrackerData, Alpha):
-        self.DisplayedTrackers[TrackerID] = [None, None]
-        self.DisplayedTrackers[TrackerID][0] = self.DisplayAx.plot(TrackerData[0][0], TrackerData[0][1], color = TrackerData[3], marker = TrackerData[4], alpha = Alpha)[0]
-        Theta, S = TrackerData[1], TrackerData[2]
-        dx, dy = self.TrackersScalingSize * S * np.cos(Theta), self.TrackersScalingSize * S * np.sin(Theta)
-        self.DisplayedTrackers[TrackerID][1] = self.DisplayAx.plot([TrackerData[0][0], TrackerData[0][0]+dx], [TrackerData[0][1], TrackerData[0][1]+dy], color = TrackerData[3], alpha = Alpha)[0]
-        self.DisplayedTrackersIDs[TrackerID] = self.DisplayAx.text(TrackerData[0][0] + 5, TrackerData[0][1], str(TrackerID), color = TrackerData[3], alpha = Alpha)
-
-    def UpdateTrackerParts(self, TrackerID, TrackerData):
-        self.DisplayedTrackers[TrackerID][0].set_data(TrackerData[0][0], TrackerData[0][1])
-        self.DisplayedTrackers[TrackerID][0].set_color(TrackerData[3])
-        self.DisplayedTrackers[TrackerID][0].set_marker(TrackerData[4])
-        Theta, S = TrackerData[1], TrackerData[2]
-        dx, dy = self.TrackersScalingSize * S * np.cos(Theta), self.TrackersScalingSize * S * np.sin(Theta)
-        self.DisplayedTrackers[TrackerID][1].set_data([TrackerData[0][0], TrackerData[0][0]+dx], [TrackerData[0][1], TrackerData[0][1]+dy])
-        self.DisplayedTrackers[TrackerID][1].set_color(TrackerData[3])
-        self.DisplayedTrackersIDs[TrackerID].set_x(TrackerData[0][0] + 5)
-        self.DisplayedTrackersIDs[TrackerID].set_y(TrackerData[0][1])
-        self.DisplayedTrackersIDs[TrackerID].set_color(TrackerData[3])
-
-    def UpdateTrackerAlpha(self, TrackerID, Alpha):
-        self.DisplayedTrackers[TrackerID][0].set_alpha(Alpha)
-        self.DisplayedTrackers[TrackerID][1].set_alpha(Alpha)
-        self.DisplayedTrackersIDs[TrackerID].set_alpha(Alpha)
-    def RemoveTrackerParts(self, TrackerID):
-        for Part in self.DisplayedTrackers[TrackerID]:
-            Part.remove()
-        self.DisplayedTrackersIDs[TrackerID].remove()
-        del self.DisplayedTrackers[TrackerID]
-        del self.DisplayedTrackersIDs[TrackerID]
-
-    def UpdateTrackerEvents(self, ActiveType):
-        if ActiveType:
-            T = self.StreamsTimes[self.CurrentStream]
-            if self.ReloadMap:
-                self.DisplayedTrackers = {}
-                self.DisplayedTrackersIDs = {}
-                for TrackerID, TrackerData in dict(self.ActiveTrackers[self.CurrentStream]).items():
-                    Alpha = min(1, max(0, np.e**((TrackerData[-2] - T)/(self.Tau / 1000))))
-                    self.AddTrackerParts(TrackerID, TrackerData, Alpha)
-                self.UpdatedTrackers[self.CurrentStream].clear()
-            else:
-                UpdateAlphas = (T - self.CurrentStreamLastUpdatedAlphasTs[self.CurrentStream] > self.Tau / 5000)
-                if UpdateAlphas:
-                    self.CurrentStreamLastUpdatedAlphasTs[self.CurrentStream] = T
-                    for TrackerID in list(self.DisplayedTrackers.keys()):
-                        TrackerData = self.ActiveTrackers[self.CurrentStream][TrackerID]
-                        Alpha = min(1, max(0, np.e**((TrackerData[-2] - T)/(self.Tau / 1000))))
-                        if Alpha < 0.001:
-                            self.RemoveTrackerParts(TrackerID)
-                            continue
-                        if TrackerID in self.UpdatedTrackers[self.CurrentStream]:
-                            if TrackerID not in self.DisplayedTrackers.keys():
-                                self.AddTrackerParts(TrackerID, TrackerData, Alpha)
-                            else:
-                                self.UpdateTrackerParts(TrackerID, TrackerData)
-                            self.UpdateTrackerAlpha(TrackerID, Alpha)
-                else:
-                    for TrackerID in list(self.UpdatedTrackers[self.CurrentStream]):
-                        TrackerData = self.ActiveTrackers[self.CurrentStream][TrackerID]
-                        Alpha = min(1, max(0, np.e**((TrackerData[-2] - T)/(self.Tau / 1000))))
-                        if TrackerID not in self.DisplayedTrackers.keys():
-                            self.AddTrackerParts(TrackerID, TrackerData, Alpha)
-                        else:
-                            if Alpha < 0.001:
-                                self.RemoveTrackerParts(TrackerID)
-                            else:
-                                self.UpdateTrackerParts(TrackerID, TrackerData)
-                                self.UpdateTrackerAlpha(TrackerID, Alpha)
-                self.UpdatedTrackers[self.CurrentStream].clear()
-        self.TrackersLabel['text'] = "{0}".format(len(self.ActiveTrackers[self.CurrentStream]))
-
+    def _DecryptTauEvent(self, Socket, t, eventList):
+        self.StreamsTaus[Socket] = eventList[0]
+        self.UpdateTauDisplayed()
+        
     def UpdateTS(self):
         self.TSLabel['text'] = "{0} ms".format(int(1000*self.StreamsTimes[self.CurrentStream]))
         self.MainWindow.after(50, self.UpdateTS)
@@ -557,8 +683,7 @@ class QuestionThreadClass(threading.Thread):
 
             if data['command'] == "cleansocket":
                 s = data['socket']
-                if s in self.Parent.StreamsMaps.keys():
-                    self.Parent.StreamsMaps[s] = -10*np.ones(self.Parent.StreamsShapes[s])
+                if s in self.Parent.StreamsTimes.keys():
                     self.Parent.StreamsTimes[s] = -0
                     self.Parent.LastTSAtRTDUpdate[s] = -0
                     self.Parent.ResponseBot.Answer(data['id'],'socketcleansed')
@@ -585,7 +710,6 @@ class QuestionThreadClass(threading.Thread):
             if data['command'] == 'rewind':
                 Stream = data['socket']
                 tNew = data['tNew']
-                self.Parent.StreamsMaps[Stream][self.Parent.StreamsMaps[Stream] > tNew] = -10
                 self.Parent.StreamsTimes[Stream] = tNew
                 self.Parent.ResponseBot.Answer(data['id'],'rewinded')
 
