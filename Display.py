@@ -117,10 +117,13 @@ class DisparityHandler:
         self.Active = ((self.Key == 1) or (self.DisplayType == "Dot"))
         self.SharedData = SharedData
         self.Reload = SharedData['ReloadCommand']
+        
+        self.NCOLORS = 10
 
         self.MaxDisparity = 30
         self.DisparitiesMaps = {}
         self.StreamsShapes = {}
+        self.Compensate = {}
 
         L = Tk.Label(InfoFrame, text = "Disparities shown:")
         L.grid(row = 0, column = 0, sticky = Tk.NW)
@@ -144,24 +147,41 @@ class DisparityHandler:
         DPlusButton = Tk.Button(OptionsFrame, text = ' + ', command = lambda: self.ChangeD(+1))
         DPlusButton.grid(column = 2, row = 0)
 
+        self.CompensateVar = Tk.IntVar(master = Master)
+        CompensateButton = Tk.Checkbutton(OptionsFrame, text = 'Compensate(c)', variable = self.CompensateVar, command = self.SwitchCompensate)
+        CompensateButton.grid(column = 0, row = 1)
+
+    def SwitchCompensate(self):
+        self.Compensate[self.SharedData['CurrentStream']] = bool(self.CompensateVar.get())
+
     def AddStreamVars(self, Name, Geometry):
         self.StreamsShapes[Name] = Geometry
         self.DisparitiesMaps[Name] = np.zeros(tuple(Geometry[:2]) + (2,))
+        self.Compensate[Name] = False
 
     def Decrypt(self, Socket, t, eventList):
-        self.DisparitiesMaps[Socket][eventList[1][0], eventList[1][1], :] = [eventList[0], t]
+        self.DisparitiesMaps[Socket][eventList[2][0], eventList[2][1], :] = [eventList[1] * eventList[0], t]
 
     def DelStreamVars(self, Name):
         del self.DisparitiesMaps[Name]
         del self.StreamsShapes[Name]
+        del self.Compensate[Name]
 
     def Update(self, Reload = False):
         if self.Active:
             CurrentStream = self.SharedData['CurrentStream']
+            self.CompensateVar.set(self.Compensate[CurrentStream])
             Tau = self.SharedData['Tau']
             DispMap = self.DisparitiesMaps[CurrentStream]
             StreamTime = self.SharedData['t']
-            Map = DispMap[:,:,0] * ((StreamTime - DispMap[:,:,1]) < Tau)
+            if self.Compensate[CurrentStream]:
+                Map = np.zeros(DispMap.shape[:2])
+                xs, ys = np.where((StreamTime - DispMap[:,:,1]) < Tau)
+                ds = DispMap[:,:,0][xs, ys]
+                xs -= ds.astype(int)
+                Map[xs, ys] = abs(ds)
+            else:
+                Map = abs(DispMap[:,:,0]) * ((StreamTime - DispMap[:,:,1]) < Tau)
 
             if Reload:
                 self.DisplayImShow = self.Ax.imshow(np.transpose(Map), vmin = 0, vmax = self.MaxDisparity, origin = "lower", cmap = 'hot')
