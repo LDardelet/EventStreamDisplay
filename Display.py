@@ -93,7 +93,9 @@ class Display:
         TauFrame.pack(anchor = Tk.W)
 
         # Initialize Event specific features
-        self._EventDecryptFunctions = {}
+        def pass_function(Socket, Timestamp, Extension):
+            pass
+        self._EventDecryptFunctions = {i: pass_function for i in range(10)}
         self._InitEventsVars()
         self._InitTrackerEventsVars()
 
@@ -599,7 +601,7 @@ class MainThreadClass(threading.Thread):
 
     def run(self):
         while self.Run:
-            data, addr = self.Connexion.recvfrom(2048)
+            data, addr = self.Connexion.recvfrom(8192)
             if b'kill' in data:
                 self.Run = False
             else:
