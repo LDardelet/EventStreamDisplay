@@ -160,7 +160,7 @@ class DisparityHandler:
         self.Compensate[Name] = False
 
     def Decrypt(self, Socket, t, eventList):
-        self.DisparitiesMaps[Socket][eventList[2][0], eventList[2][1], :] = [eventList[1] * eventList[0], t]
+        self.DisparitiesMaps[Socket][eventList[0][0], eventList[0][1], :] = [eventList[1] * eventList[2], t]
 
     def DelStreamVars(self, Name):
         del self.DisparitiesMaps[Name]
@@ -654,9 +654,9 @@ class Display:
         self.MainWindow.after(5, self.UpdateScene)
 
     def _DecryptFullEvent(self, Socket, eventList):
-        t = eventList[1]
+        t = eventList[0]
         self.StreamsTimes[Socket] = max(self.StreamsTimes[Socket], t)
-        for Extension in eventList[2:]:
+        for Extension in eventList[1:]:
             self.Handlers[Extension[0]].Decrypt(Socket, t, Extension[1:])
 
     def _InitTauEventsVars(self):
