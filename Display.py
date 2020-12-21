@@ -15,6 +15,7 @@ from colour import Color
 
 import threading
 import datetime
+from string import ascii_lowercase as alphabet
 
 matplotlib.use("TkAgg")
 
@@ -150,8 +151,11 @@ class DisparityHandler:
         self.CompensateVar = Tk.IntVar(master = Master)
         CompensateButton = Tk.Checkbutton(OptionsFrame, text = 'Compensate(c)', variable = self.CompensateVar, command = self.SwitchCompensate)
         CompensateButton.grid(column = 0, row = 1)
+        Master.bind('<c>', lambda event:self.SwitchCompensate(True))
 
-    def SwitchCompensate(self):
+    def SwitchCompensate(self, FromBinding = False):
+        if FromBinding:
+            self.CompensateVar.set(1-self.CompensateVar.get())
         self.Compensate[self.SharedData['CurrentStream']] = bool(self.CompensateVar.get())
 
     def AddStreamVars(self, Name, Geometry):
@@ -160,7 +164,7 @@ class DisparityHandler:
         self.Compensate[Name] = False
 
     def Decrypt(self, Socket, t, eventList):
-        self.DisparitiesMaps[Socket][eventList[2][0], eventList[2][1], :] = [eventList[1] * eventList[0], t]
+        self.DisparitiesMaps[Socket][eventList[0][0], eventList[0][1], :] = [eventList[1] * eventList[2], t]
 
     def DelStreamVars(self, Name):
         del self.DisparitiesMaps[Name]
@@ -381,6 +385,11 @@ class Display:
 
         self.Display = Figure(figsize=(7,7), dpi=150)
         self.DisplayAx = self.Display.add_subplot(111)
+        DisplayCanvas = FigureCanvasTkAgg(self.Display, self.DisplayFrame)
+        DisplayCanvas.mpl_connect('button_press_event', self.OnClick)
+        DisplayCanvas.draw()
+        DisplayCanvas.get_tk_widget().grid(row = 0, column = 0)
+        
 
         L = Tk.Label(self.DisplayedTypesFrame, text = "Display selection :")
         L.grid(row = 0, column = 0, sticky = Tk.W)
@@ -393,18 +402,25 @@ class Display:
         self.DisplayedMapTypeVar = Tk.IntVar(master = self.MainWindow)
         self.DisplayedMapTypeVar.set(1)
         self.Handlers = {}
+        UsedKeys = set()
         HandlersRows = {"Map":0, "Dot":0}
         for nType, Handler in enumerate(_HANDLERS):
+            letter = Handler.Name[0].lower()
+            while letter in UsedKeys:
+                letter = alphabet[alphabet.index(letter)-1]
+            UsedKeys.add(letter)
             if Handler.DisplayType == "Dot":
                 HandlerFrame = self.DisplayedTypesDotFrame
                 HandlerInfoFrame = self.HandlersDotInfoFrame
                 self.DisplayedTypesVars[Handler.Key] = Tk.IntVar(master = self.MainWindow)
                 self.DisplayedTypesVars[Handler.Key].set(1)
-                Button = Tk.Checkbutton(HandlerFrame, text = Handler.Name, variable = self.DisplayedTypesVars[Handler.Key], command = lambda E=Handler.Key: self.SwitchDisplayedTypeOnOff(E))
+                Button = Tk.Checkbutton(HandlerFrame, text = Handler.Name + ' ({0})'.format(letter), variable = self.DisplayedTypesVars[Handler.Key], command = lambda E=Handler.Key : self.SwitchDisplayedTypeOnOff(E))
+                self.MainWindow.bind('<{0}>'.format(letter), lambda event, E = Handler.Key:self.SwitchDisplayedTypeOnOff(E, True))
             elif Handler.DisplayType == "Map":
                 HandlerFrame = self.DisplayedTypesMapFrame
                 HandlerInfoFrame = self.HandlersMapInfoFrame
-                Button = Tk.Radiobutton(HandlerFrame, text = Handler.Name, variable = self.DisplayedMapTypeVar, value = Handler.Key, command = self.SwitchDisplayedMapType)
+                Button = Tk.Radiobutton(HandlerFrame, text = Handler.Name + ' ({0})'.format(letter), variable = self.DisplayedMapTypeVar, value = Handler.Key, command = lambda:self.SwitchDisplayedMapType())
+                self.MainWindow.bind('<{0}>'.format(letter), lambda event, E = Handler.Key:self.SwitchDisplayedMapType(E))
             else:
                 raise Exception("Ill defined handler")
             Button.grid(row = HandlersRows[Handler.DisplayType], column = 0, sticky = Tk.W)
@@ -414,17 +430,13 @@ class Display:
 
             HandlerInfoFrame = Tk.Frame(HandlerInfoFrame)
             HandlerInfoFrame.pack(anchor = Tk.W)
+            
             self.Handlers[Handler.Key] = Handler(self.MainWindow, self.DisplayAx, self.Display.canvas, HandlerInfoFrame, HandlerOptionsFrame, self.SharedData)
 
         self.StreamsVariable = Tk.IntVar(master = self.MainWindow)
         self._MinimumGeometry = np.array([10, 10, 2])
         self.AddStream('None', self._MinimumGeometry)
 
-        DisplayCanvas = FigureCanvasTkAgg(self.Display, self.DisplayFrame)
-        DisplayCanvas.mpl_connect('button_press_event', self.OnClick)
-        DisplayCanvas.draw()
-        DisplayCanvas.get_tk_widget().grid(row = 0, column = 0)
-        
         self.RTMinLim = 10**-4
         self.RTMaxLim = 10**1
         self.CurrentRTValue = 1
@@ -494,7 +506,6 @@ class Display:
         self.MainWindow.bind('<KP_2>', lambda event: self.SetPolasMode(2))
         self.MainWindow.bind('<Down>', lambda event: self.SwitchStream(+1))
         self.MainWindow.bind('<Up>', lambda event: self.SwitchStream(-1))
-        self.MainWindow.bind('<c>', lambda event: self.ChangeColorMode())
         self.MainWindow.protocol('WM_DELETE_WINDOW', self._on_closing)
 
         ClearStreamsButton = Tk.Button(self.MainWindow, text='Clear', command = self.ClearStreams)
@@ -556,14 +567,19 @@ class Display:
             self.StreamsVariable.set(min(max(self.StreamsVariable.get() + var, 0), len(self.Streams)-1))
         self.Reload()
 
-    def SwitchDisplayedMapType(self):
-        NewValue = self.DisplayedMapTypeVar.get()
+    def SwitchDisplayedMapType(self, NewValue = None):
+        if NewValue is None:
+            NewValue = self.DisplayedMapTypeVar.get()
+        else:
+            self.DisplayedMapTypeVar.set(NewValue)
         for Handler in self.Handlers.values():
             if Handler.DisplayType == "Map":
                 Handler.Active = (Handler.Key == NewValue)
         self.Reload()
 
-    def SwitchDisplayedTypeOnOff(self, EventKey):
+    def SwitchDisplayedTypeOnOff(self, EventKey, FromBinding = False):
+        if FromBinding:
+            self.DisplayedTypesVars[EventKey].set(1 - self.DisplayedTypesVars[EventKey].get())
         self.Handlers[EventKey].Active = bool(self.DisplayedTypesVars[EventKey].get())
         self.Reload()
 
@@ -654,9 +670,9 @@ class Display:
         self.MainWindow.after(5, self.UpdateScene)
 
     def _DecryptFullEvent(self, Socket, eventList):
-        t = eventList[1]
+        t = eventList[0]
         self.StreamsTimes[Socket] = max(self.StreamsTimes[Socket], t)
-        for Extension in eventList[2:]:
+        for Extension in eventList[1:]:
             self.Handlers[Extension[0]].Decrypt(Socket, t, Extension[1:])
 
     def _InitTauEventsVars(self):
