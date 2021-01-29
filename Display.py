@@ -324,8 +324,96 @@ class TrackerHandler:
                 self.UpdatedTrackers[CurrentStream].clear()
         self.TrackersLabel['text'] = "{0}".format(len(self.ActiveTrackers[CurrentStream]))
 
+class FlowHandler:
+    Key = 6
+    DisplayType = "Dot"
+    Name = "Optical Flow"
+    def __init__(self, Master, Display, Canvas, InfoFrame, OptionsFrame, SharedData):
+        self.Ax = Display
+        self.Canvas = Canvas
+        self.Active = ((self.Key == 1) or (self.DisplayType == "Dot"))
+        self.SharedData = SharedData
+        self.Reload = SharedData['ReloadCommand']
 
-_HANDLERS = [EventHandler, TrackerHandler, DisparityHandler]
+        self.AlphaPerPixel = 0.4
+        self.PlottedFlowDensity = 0.1
+        self.LastClearAndUpdate = -np.inf
+        self.FlowMaps = {}
+        self.UpdatedFlowsLocations = {}
+        self.PlottedFlows = {}
+        L = Tk.Label(InfoFrame, text = "Plotted Flows :")
+        L.pack(anchor = Tk.W)
+        self.FlowsLabel = Tk.Label(InfoFrame)
+        self.FlowsLabel.pack(anchor = Tk.W)
+        
+    def Decrypt(self, Socket, t, eventList):
+        location, flow = eventList
+        if (abs(flow[0]) - int(abs(flow[0]))) >= self.PlottedFlowDensity:
+            return
+        self.FlowMaps[Socket][location[0], location[1], :2] = np.array(flow)
+        self.FlowMaps[Socket][location[0], location[1], 2] = t
+        self.UpdatedFlowsLocations[Socket].add(tuple(location))
+    def AddStreamVars(self, Name, Geometry):
+        self.FlowMaps[Name] = np.zeros(tuple(Geometry[:2]) + (3,))
+        self.FlowMaps[Name][:,:,2] = -np.inf
+        self.UpdatedFlowsLocations[Name] = set()
+        self.PlottedFlows[Name] = []
+
+    def DelStreamVars(self, Name):
+        del self.FlowMaps[Name]
+        del self.UpdatedFlowsLocations[Name]
+        del self.PlottedFlows[Name]
+    
+    def PlotFlow(self, x, y, T, Tau, CurrentStream):
+        fx, fy, t = self.FlowMaps[CurrentStream][x, y, :]
+        f = np.array([fx, fy])
+        n = np.linalg.norm(f)
+        alpha = self.alpha(t, T, Tau)
+        if alpha > 0.1:
+            nf = f / n
+            r = max(0., nf[0])
+            g = max(0., (nf * np.array([-1, np.sqrt(3)])).sum()/2)
+            b = max(0., (nf * np.array([-1, -np.sqrt(3)])).sum()/2)
+            color = np.sqrt(np.minimum(np.array([r, g, b, alpha]), np.ones(4, dtype = float)))
+            df = f * Tau
+            self.PlottedFlows[CurrentStream] += [(t, n, self.Ax.arrow(x, y, df[0], df[1], color = color))]
+
+    def alpha(self, t, T, Tau):
+        return max(0., 1-(T-t)/Tau)
+
+    def Update(self, Reload = False):
+        CurrentStream = self.SharedData['CurrentStream']
+        Tau = self.SharedData['Tau']
+        if self.Active:
+            T = self.SharedData['t']
+            if Reload:
+                self.LastClearAndUpdate = T
+                for t, n, arrow in self.PlottedFlows[CurrentStream]:
+                    arrow.remove()
+                self.PlottedFlows[CurrentStream] = []
+                for x in range(self.FlowMaps[CurrentStream].shape[0]):
+                    for y in range(self.FlowMaps[CurrentStream].shape[1]):
+                        self.PlotFlow(x, y, T, Tau, CurrentStream)
+            else:
+                if T - self.LastClearAndUpdate > Tau / 5:
+                    KeptArrows = []
+                    for n, (t, n, arrow) in enumerate(self.PlottedFlows[CurrentStream]):
+                        alpha = self.alpha(t, T, Tau)
+                        if alpha < 0.1:
+                            arrow.remove()
+                        else:
+                            arrow.set_alpha(alpha)
+                            KeptArrows += [(t, n, arrow)]
+                    self.PlottedFlows[CurrentStream] = KeptArrows
+                    LastClearAndUpdate = T
+                for x, y in set(self.UpdatedFlowsLocations[CurrentStream]):
+                    self.PlotFlow(x, y, T, Tau, CurrentStream)
+                self.UpdatedFlowsLocations[CurrentStream].clear()
+
+        self.FlowsLabel['text'] = "{0}".format(len(self.PlottedFlows[CurrentStream]))
+
+
+_HANDLERS = [EventHandler, TrackerHandler, DisparityHandler, FlowHandler]
 
 class Display:
     _DefaultTau = 0.030
