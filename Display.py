@@ -704,11 +704,23 @@ class Display:
 
     def ChangedTau(self, var):
         self.dTau *= 2**var
-        self.dTauLabel['text'] = "dTau : {0:.1f} ms".format(int(1000*self.dTau))
+        DisplayeddTau = self.dTau
+        Prefixes = ['', 'm', 'µ', 'n']
+        nPrefix = 0
+        while DisplayeddTau < 1 and nPrefix != 3:
+            DisplayeddTau *= 1000
+            nPrefix += 1
+        self.dTauLabel['text'] = "dTau : {0:.1f} {1}s".format(DisplayeddTau, Prefixes[nPrefix])
 
     def UpdateTauDisplayed(self):
         self.SharedData['Tau'] = self.StreamsTaus[self.CurrentStream]
-        self.TauLabel['text'] = "Tau : {0} ms".format(int(1000*self.Tau))
+        DisplayedTau = self.Tau
+        Prefixes = ['', 'm', 'µ', 'n']
+        nPrefix = 0
+        while DisplayedTau < 1 and nPrefix != 3:
+            DisplayedTau *= 1000
+            nPrefix += 1
+        self.TauLabel['text'] = "Tau : {0:.1f} {1}s".format(DisplayedTau, Prefixes[nPrefix])
 
     def printPolaritiesVariable(self):
         print(self.PolaritiesVariable.get())
