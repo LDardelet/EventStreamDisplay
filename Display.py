@@ -35,6 +35,18 @@ def KillDisplay(mainPort = 54242, questionPort = 54243, address = "localhost"):
     MainUDP.sendto(Main,MainAddress)
     MainUDP.close()
 
+class NullHandler:
+    def __init__(self):
+        pass
+    def Decrypt(self, Socket, t, eventList):
+        pass
+    def AddStreamVars(self, Name, Geometry):
+        pass
+    def DelStreamVars(self, Name):
+        pass
+    def Update(self, ReloadMap):
+        pass
+
 class EventHandler:
     Key = 1
     DisplayType = "Map"
@@ -432,6 +444,9 @@ class Display:
             HandlerInfoFrame.pack(anchor = Tk.W)
             
             self.Handlers[Handler.Key] = Handler(self.MainWindow, self.DisplayAx, self.Display.canvas, HandlerInfoFrame, HandlerOptionsFrame, self.SharedData)
+        for UnusedKey in range(10):
+            if UnusedKey not in self.Handlers:
+                self.Handlers[UnusedKey] = NullHandler()
 
         self.StreamsVariable = Tk.IntVar(master = self.MainWindow)
         self._MinimumGeometry = np.array([10, 10, 2])
