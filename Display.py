@@ -36,6 +36,7 @@ def KillDisplay(mainPort = 54242, questionPort = 54243, address = "localhost"):
     MainUDP.close()
 
 class NullHandler:
+    DisplayType = 'None'
     def __init__(self):
         pass
     def Decrypt(self, Socket, t, eventList):
@@ -676,6 +677,8 @@ class Display:
         else:
             self.DisplayedMapTypeVar.set(NewValue)
         for Handler in self.Handlers.values():
+            if Handler.DisplayType == 'None':
+                continue
             if Handler.DisplayType == "Map":
                 Handler.Active = (Handler.Key == NewValue)
         self.Reload()
