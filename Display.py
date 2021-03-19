@@ -195,7 +195,7 @@ class DisparityHandler:
                 Map = np.zeros(DispMap.shape[:2])
                 xs, ys = np.where((StreamTime - DispMap[:,:,1]) < Tau)
                 ds = DispMap[:,:,0][xs, ys]
-                xs -= ds.astype(int)
+                xs += ds.astype(int)
                 Map[xs, ys] = abs(ds)
             else:
                 Map = abs(DispMap[:,:,0]) * ((StreamTime - DispMap[:,:,1]) < Tau)
