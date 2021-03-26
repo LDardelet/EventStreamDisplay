@@ -134,7 +134,8 @@ class DisparityHandler:
         
         self.NCOLORS = 10
 
-        self.MaxDisparity = 30
+        self.MinDisparity = 0
+        self.MaxDisparity = 50
         self.DisparitiesMaps = {}
         self.StreamsShapes = {}
         self.Compensate = {}
@@ -154,16 +155,23 @@ class DisparityHandler:
         self.CBAx = CBFig.add_subplot(111)
         self.DrawColorbar()
 
-        self.DisparityLabel = Tk.Label(OptionsFrame, text = "Max Disparity : {0}".format(self.MaxDisparity))
-        self.DisparityLabel.grid(column = 0, row = 0)
-        DMinusButton = Tk.Button(OptionsFrame, text = ' - ', command = lambda: self.ChangeD(-1))
-        DMinusButton.grid(column = 1, row = 0)
-        DPlusButton = Tk.Button(OptionsFrame, text = ' + ', command = lambda: self.ChangeD(+1))
-        DPlusButton.grid(column = 2, row = 0)
+        self.MaxDisparityLabel = Tk.Label(OptionsFrame, text = "Max Disparity : {0}".format(self.MaxDisparity))
+        self.MaxDisparityLabel.grid(column = 0, row = 0)
+        MaxDMinusButton = Tk.Button(OptionsFrame, text = ' - ', command = lambda: self.ChangeMaxD(-1))
+        MaxDMinusButton.grid(column = 1, row = 0)
+        MaxDPlusButton = Tk.Button(OptionsFrame, text = ' + ', command = lambda: self.ChangeMaxD(+1))
+        MaxDPlusButton.grid(column = 2, row = 0)
+
+        self.MinDisparityLabel = Tk.Label(OptionsFrame, text = "Min Disparity : {0}".format(self.MinDisparity))
+        self.MinDisparityLabel.grid(column = 0, row = 1)
+        MinDMinusButton = Tk.Button(OptionsFrame, text = ' - ', command = lambda: self.ChangeMinD(-1))
+        MinDMinusButton.grid(column = 1, row = 1)
+        MinDPlusButton = Tk.Button(OptionsFrame, text = ' + ', command = lambda: self.ChangeMinD(+1))
+        MinDPlusButton.grid(column = 2, row = 1)
 
         self.CompensateVar = Tk.IntVar(master = Master)
         CompensateButton = Tk.Checkbutton(OptionsFrame, text = 'Compensate(c)', variable = self.CompensateVar, command = self.SwitchCompensate)
-        CompensateButton.grid(column = 0, row = 1)
+        CompensateButton.grid(column = 0, row = 2)
         Master.bind('<c>', lambda event:self.SwitchCompensate(True))
 
     def SwitchCompensate(self, FromBinding = False):
@@ -201,7 +209,7 @@ class DisparityHandler:
                 Map = abs(DispMap[:,:,0]) * ((StreamTime - DispMap[:,:,1]) < Tau)
 
             if Reload:
-                self.DisplayImShow = self.Ax.imshow(np.transpose(Map), vmin = 0, vmax = self.MaxDisparity, origin = "lower", cmap = 'hot')
+                self.DisplayImShow = self.Ax.imshow(np.transpose(Map), vmin = self.MinDisparity, vmax = self.MaxDisparity, origin = "lower", cmap = 'hot')
                 self.Ax.set_xlim(-0.5, self.StreamsShapes[CurrentStream][0]-0.5)
                 self.Ax.set_ylim(-0.5, self.StreamsShapes[CurrentStream][1]-0.5)
             else:
@@ -212,16 +220,23 @@ class DisparityHandler:
             if Reload:
                 self.EventsLabel['text'] = "0"
 
-    def ChangeD(self, var):
-        self.MaxDisparity = max(5, self.MaxDisparity + var * 5)
-        self.DisparityLabel['text'] = "Max Disparity : {0}".format(self.MaxDisparity)
+    def ChangeMaxD(self, var):
+        self.MaxDisparity = max(self.MinDisparity + 5, self.MaxDisparity + var * 5)
+        self.MaxDisparityLabel['text'] = "Max Disparity : {0}".format(self.MaxDisparity)
         if self.Active:
-            self.DisplayImShow.set_clim((0, self.MaxDisparity))
+            self.DisplayImShow.set_clim((self.MinDisparity, self.MaxDisparity))
+        self.DrawColorbar()
+
+    def ChangeMinD(self, var):
+        self.MinDisparity = max(0, min(self.MaxDisparity-5, self.MinDisparity + var * 5))
+        self.MinDisparityLabel['text'] = "Min Disparity : {0}".format(self.MinDisparity)
+        if self.Active:
+            self.DisplayImShow.set_clim((self.MinDisparity, self.MaxDisparity))
         self.DrawColorbar()
 
     def DrawColorbar(self):
         self.CBAx.cla()
-        norm = matplotlib.colors.Normalize(vmin=0, vmax=self.MaxDisparity)
+        norm = matplotlib.colors.Normalize(vmin=self.MinDisparity, vmax=self.MaxDisparity)
 
         self.CB = matplotlib.colorbar.ColorbarBase(self.CBAx, cmap=plt.cm.hot,
                                 norm=norm,
@@ -817,6 +832,7 @@ class QuestionThreadClass(threading.Thread):
             
             data = cPickle.loads(data_raw)
             print("Received {0} command".format(data['command']))
+            print(data)
             if data['command'] == 'isup':
                 self.Parent.ResponseBot.Answer(data['id'],True)
             if data['command'] == 'kill':
