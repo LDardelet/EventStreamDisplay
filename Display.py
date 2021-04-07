@@ -12,6 +12,7 @@ from tkinter import filedialog as tkFileDialog
 import time
 from matplotlib.patches import Rectangle
 from colour import Color
+import os
 
 import threading
 import datetime
@@ -169,9 +170,12 @@ class DisparityHandler:
         MinDPlusButton = Tk.Button(OptionsFrame, text = ' + ', command = lambda: self.ChangeMinD(+1))
         MinDPlusButton.grid(column = 2, row = 1)
 
+        AutoDisparityButton = Tk.Button(OptionsFrame, text = "Find disparity range", command = self.AutoSet)
+        AutoDisparityButton.grid(column = 0, row = 2)
+
         self.CompensateVar = Tk.IntVar(master = Master)
         CompensateButton = Tk.Checkbutton(OptionsFrame, text = 'Compensate(c)', variable = self.CompensateVar, command = self.SwitchCompensate)
-        CompensateButton.grid(column = 0, row = 2)
+        CompensateButton.grid(column = 0, row = 3)
         Master.bind('<c>', lambda event:self.SwitchCompensate(True))
 
     def SwitchCompensate(self, FromBinding = False):
@@ -230,6 +234,51 @@ class DisparityHandler:
     def ChangeMinD(self, var):
         self.MinDisparity = max(0, min(self.MaxDisparity-5, self.MinDisparity + var * 5))
         self.MinDisparityLabel['text'] = "Min Disparity : {0}".format(self.MinDisparity)
+        if self.Active:
+            self.DisplayImShow.set_clim((self.MinDisparity, self.MaxDisparity))
+        self.DrawColorbar()
+
+    def AutoSet(self):
+        DispMap = self.DisparitiesMaps[self.SharedData['CurrentStream']]
+        ds = abs(DispMap[:,:,0][np.where((self.SharedData['t'] - DispMap[:,:,1]) < self.SharedData['Tau'])])
+        if ds.shape[0] == 0 or int(ds.max()) == 0:
+            self.MinDisparity = 0
+            self.MaxDisparity = 50
+        else:
+            self.MinDisparity = int(ds.min()) - (int(ds.min())%5)
+            self.MaxDisparity = int(ds.max()) + 5 - int(ds.max())%5
+            N = ds.shape[0]
+            while True:
+                if (ds < (self.MinDisparity + 5)).sum() < 0.01 * N:
+                    self.MinDisparity = self.MinDisparity + 5
+                else:
+                    break
+            while self.MaxDisparity >= self.MinDisparity + 5:
+                if (ds > (self.MaxDisparity - 5)).sum() < 0.01 * N:
+                    self.MaxDisparity = self.MaxDisparity - 5
+                else:
+                    break
+        self.MinDisparityLabel['text'] = "Min Disparity : {0}".format(self.MinDisparity)
+        self.MaxDisparityLabel['text'] = "Max Disparity : {0}".format(self.MaxDisparity)
+        if self.Active:
+            self.DisplayImShow.set_clim((self.MinDisparity, self.MaxDisparity))
+        self.DrawColorbar()
+
+    def AutoSetOld(self):
+        DispMap = self.DisparitiesMaps[self.SharedData['CurrentStream']]
+        ds = abs(DispMap[:,:,0][np.where((self.SharedData['t'] - DispMap[:,:,1]) < self.SharedData['Tau'])])
+        if ds.shape[0] == 0 or int(ds.max()) == 0:
+            self.MinDisparity = 0
+            self.MaxDisparity = 30
+        else:
+            self.MinDisparity = int(ds.min())
+            self.MaxDisparity = int(ds.max())
+        if self.MinDisparity%5 != 0:
+            self.MinDisparity = int(self.MinDisparity - self.MinDisparity%5)
+        if self.MaxDisparity%5 != 0:
+            self.MaxDisparity = int(self.MaxDisparity - self.MaxDisparity%5 + 5)
+        self.MinDisparityLabel['text'] = "Min Disparity : {0}".format(self.MinDisparity)
+        self.MaxDisparityLabel['text'] = "Max Disparity : {0}".format(self.MaxDisparity)
         if self.Active:
             self.DisplayImShow.set_clim((self.MinDisparity, self.MaxDisparity))
         self.DrawColorbar()
@@ -374,6 +423,17 @@ class FlowHandler:
         self.FlowsLabel = Tk.Label(InfoFrame)
         self.FlowsLabel.pack(anchor = Tk.W)
         
+        self.FDLabel = Tk.Label(OptionsFrame, text = "Flow density : {0:.1f}".format(self.PlottedFlowDensity))
+        self.FDLabel.grid(column = 0, row = 0)
+        FDMinusButton = Tk.Button(OptionsFrame, text = ' - ', command = lambda: self.ChangeFD(-1))
+        FDMinusButton.grid(column = 1, row = 0)
+        FDPlusButton = Tk.Button(OptionsFrame, text = ' + ', command = lambda: self.ChangeFD(+1))
+        FDPlusButton.grid(column = 2, row = 0)
+
+    def ChangeFD(self, var):
+        self.PlottedFlowDensity = max(0, min(1., self.PlottedFlowDensity + var * 0.1))
+        self.FDLabel['text'] = "Flow density : {0:.1f}".format(self.PlottedFlowDensity)
+
     def Decrypt(self, Socket, t, eventList):
         location, flow = eventList
         if (abs(flow[0]) - int(abs(flow[0]))) >= self.PlottedFlowDensity:
@@ -445,6 +505,8 @@ _HANDLERS = [EventHandler, TrackerHandler, DisparityHandler, FlowHandler]
 
 class Display:
     _DefaultTau = 0.030
+    _AutoRecordDt = 0.01
+    _AutoRecordFolder = 'home/dardelet/Pictures/Recordings/'
     def __init__(self, mainPort = 54242, questionPort = 54243, responsePort = 54244, listen = "", responseAddress = 'localhost'):
         self.SharedData = {'t':0, 'Tau':self._DefaultTau, 'Stream':None, 'ReloadCommand': self.Reload}
         self.dTau = 0.005
