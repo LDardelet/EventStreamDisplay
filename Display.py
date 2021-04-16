@@ -13,6 +13,7 @@ import time
 from matplotlib.patches import Rectangle
 from colour import Color
 import os
+import random
 
 import threading
 import datetime
@@ -40,7 +41,7 @@ class NullHandler:
     DisplayType = 'None'
     def __init__(self):
         pass
-    def Decrypt(self, Socket, t, eventList):
+    def Decrypt(self, Socket, t, Data, Location):
         pass
     def AddStreamVars(self, Name, Geometry):
         pass
@@ -86,8 +87,8 @@ class EventHandler:
             PolaritiesButtons += [Tk.Checkbutton(PolaritiesFrame, text = Text, variable = self.DisplayedPolaritiesVars[-1], command = lambda n=nPola, P=Polarity: self.SwitchDisplayedPolasOnOff(n,P))]
             PolaritiesButtons[-1].grid(row = 0, column = nPola, sticky = Tk.N)
         
-    def Decrypt(self, Socket, t, eventList):
-        self.StreamsMaps[Socket][eventList[0][0], eventList[0][1], eventList[1]] = t
+    def Decrypt(self, Socket, t, Data, Location = None):
+        self.StreamsMaps[Socket][Data[0][0], Data[0][1], Data[1]] = t
     def AddStreamVars(self, Name, Geometry):
         self.StreamsShapes[Name] = Geometry
         self.StreamsMaps[Name] = -10*np.ones(self.StreamsShapes[Name])
@@ -188,8 +189,10 @@ class DisparityHandler:
         self.DisparitiesMaps[Name] = np.zeros(tuple(Geometry[:2]) + (2,))
         self.Compensate[Name] = False
 
-    def Decrypt(self, Socket, t, eventList):
-        self.DisparitiesMaps[Socket][eventList[0][0], eventList[0][1], :] = [eventList[1] * eventList[2], t]
+    def Decrypt(self, Socket, t, Data, Location = None):
+        if Location is None:
+            return
+        self.DisparitiesMaps[Socket][Location[0], Location[1], :] = [Data[0] * Data[1], t]
 
     def DelStreamVars(self, Name):
         del self.DisparitiesMaps[Name]
@@ -314,9 +317,9 @@ class TrackerHandler:
         self.TrackersLabel = Tk.Label(InfoFrame)
         self.TrackersLabel.pack(anchor = Tk.W)
         
-    def Decrypt(self, Socket, t, eventList):
-        ID = eventList.pop(1)
-        self.ActiveTrackers[Socket][ID] = eventList + [t,t]
+    def Decrypt(self, Socket, t, Data, Location = None):
+        ID = Data.pop(1)
+        self.ActiveTrackers[Socket][ID] = Data + [t,t]
         self.UpdatedTrackers[Socket].add(ID)
     def AddStreamVars(self, Name, Geometry):
         self.ActiveTrackers[Name] = {}
@@ -401,6 +404,8 @@ class TrackerHandler:
                 self.UpdatedTrackers[CurrentStream].clear()
         self.TrackersLabel['text'] = "{0}".format(len(self.ActiveTrackers[CurrentStream]))
 
+import random
+
 class FlowHandler:
     Key = 6
     DisplayType = "Dot"
@@ -434,13 +439,14 @@ class FlowHandler:
         self.PlottedFlowDensity = max(0, min(1., self.PlottedFlowDensity + var * 0.1))
         self.FDLabel['text'] = "Flow density : {0:.1f}".format(self.PlottedFlowDensity)
 
-    def Decrypt(self, Socket, t, eventList):
-        location, flow = eventList
-        if (abs(flow[0]) - int(abs(flow[0]))) >= self.PlottedFlowDensity:
+    def Decrypt(self, Socket, t, Data, Location = None):
+        if Location is None:
             return
-        self.FlowMaps[Socket][location[0], location[1], :2] = np.array(flow)
-        self.FlowMaps[Socket][location[0], location[1], 2] = t
-        self.UpdatedFlowsLocations[Socket].add(tuple(location))
+        if random.random() >= self.PlottedFlowDensity:
+            return
+        self.FlowMaps[Socket][Location[0], Location[1], :2] = np.array(Data)
+        self.FlowMaps[Socket][Location[0], Location[1], 2] = t
+        self.UpdatedFlowsLocations[Socket].add(tuple(Location))
     def AddStreamVars(self, Name, Geometry):
         self.FlowMaps[Name] = np.zeros(tuple(Geometry[:2]) + (3,))
         self.FlowMaps[Name][:,:,2] = -np.inf
@@ -505,8 +511,6 @@ _HANDLERS = [EventHandler, TrackerHandler, DisparityHandler, FlowHandler]
 
 class Display:
     _DefaultTau = 0.030
-    _AutoRecordDt = 0.01
-    _AutoRecordFolder = 'home/dardelet/Pictures/Recordings/'
     def __init__(self, mainPort = 54242, questionPort = 54243, responsePort = 54244, listen = "", responseAddress = 'localhost'):
         self.SharedData = {'t':0, 'Tau':self._DefaultTau, 'Stream':None, 'ReloadCommand': self.Reload}
         self.dTau = 0.005
@@ -621,7 +625,6 @@ class Display:
         self.RTMinLim = 10**-4
         self.RTMaxLim = 10**1
         self.CurrentRTValue = 1
-        self.UpdateRTDTimeConstant = 500 # in ms
         self.RealTimeDisplay = Figure(figsize=(1,2.5), dpi=100)
         self.RealTimeDisplayAx = self.RealTimeDisplay.add_subplot(111)
         self.RealTimeDisplayAx.tick_params('both', bottom =  'off', labelbottom = 'off')
@@ -692,6 +695,7 @@ class Display:
         ClearStreamsButton = Tk.Button(self.MainWindow, text='Clear', command = self.ClearStreams)
         ClearStreamsButton.grid(row = 5, column = 1, sticky = Tk.W)
 
+        self._DelayedDataGCTargets = []
 
         self.QuestionThread = QuestionThreadClass(self, self.QuestionSocket)
         self.QuestionThread.start()
@@ -701,11 +705,24 @@ class Display:
         self.MainThread = MainThreadClass(self, self.MainSocket)
         self.MainThread.start()
 
-        self.UpdateStreamsList()
-        self.UpdateScene()
-        self.UpdateTS()
-        self.UpdateRTD()
+        self.UpdateRTDTimeConstant = 500 # in ms
+        self.UpdateSceneTimeConstant = 5
+        self.UpdateTSTimeConstant = 50
+        self.UpdateStreamsListTimeConstant = 100
+        self.FullUpdateCheckTimeConstant = 3000
+
+        self.LastLoopUpdates = {'StreamsList':[0,0], 'Scene':[0,0], 'TS':[0,0], 'RTD':[0,0]}
+        self.FullUpdateCheck()
         self.MainWindow.mainloop()
+
+    def FullUpdateCheck(self):
+        for Loop, (LastUpdateID, LastRegisteredUpdateID) in self.LastLoopUpdates.items():
+            if LastUpdateID != LastRegisteredUpdateID: # An update occured, meaning that loop is still running
+                self.LastLoopUpdates[Loop][1] = self.LastLoopUpdates[Loop][0] # We aknowledge that update
+            else:
+                print("Re-starting loop {0}".format(Loop))
+                self.__class__.__dict__['Update'+Loop](self) # Else we restart that loop, and do not aknoledge any update. Next occurence, LastUpdateID should have changed
+        self.MainWindow.after(self.FullUpdateCheckTimeConstant, self.FullUpdateCheck)
 
     @property
     def Tau(self):
@@ -727,6 +744,17 @@ class Display:
             Handler.AddStreamVars(Name, Geometry)
 
     def RemoveStream(self, Name):
+        if Name not in self.Streams:
+            return
+        self._DelayedDataGCTargets += [Name]
+        for Stream in reversed(self.Streams):
+            if Stream not in self._DelayedDataGCTargets:
+                self.SharedData['CurrentStream'] = Stream
+                break
+        self.MainWindow.after(300, self.DelayedDataGC)
+
+    def DelayedDataGC(self):
+        Name = self._DelayedDataGCTargets.pop(0)
         del self.StreamsTimes[Name]
         del self.LastTSAtRTDUpdate[Name]
         del self.StreamsInfos[Name]
@@ -736,7 +764,7 @@ class Display:
             Handler.DelStreamVars(Name)
         self.CurrentlyDisplayedStreams.remove(Name)
         self.Streams.remove(Name)
-        self.SharedData['CurrentStream'] = self.Streams[-1]
+        self.ReloadNames = True
 
     def OnClick(self, event):
         if event.inaxes is None:
@@ -775,9 +803,9 @@ class Display:
             if not Stream in Except:
                 self.RemoveStream(Stream)
         self.ReloadNames = True
-        self.UpdateStreamsList()
+        self.UpdateStreamsList(Cycle = False)
 
-    def UpdateStreamsList(self):
+    def UpdateStreamsList(self, Cycle = True):
         if self.CurrentlyDisplayedStreams != self.Streams or self.ReloadNames:
             self.ReloadNames = False
             self.CurrentlyDisplayedStreams = []
@@ -791,7 +819,9 @@ class Display:
                 self.CurrentlyDisplayedStreams += [Stream]
             self.StreamsVariable.set(len(self.Streams)-1)
             self.Reload()
-        self.MainWindow.after(100, self.UpdateStreamsList)
+        if Cycle:
+            self.LastLoopUpdates['StreamsList'][0] = random.random()
+            self.MainWindow.after(self.UpdateStreamsListTimeConstant, self.UpdateStreamsList)
 
     def ChangeTau(self, var):
         self.StreamsTaus[self.CurrentStream] = max(self.dTau, self.Tau + var * self.dTau)
@@ -836,7 +866,7 @@ class Display:
     def UpdateRTD(self):
         TimeEllapsed = self.StreamsTimes[self.CurrentStream] - self.LastTSAtRTDUpdate[self.CurrentStream]
         self.LastTSAtRTDUpdate[self.CurrentStream] = self.StreamsTimes[self.CurrentStream]
-        self.CurrentRTValue = max(self.RTMinLim, TimeEllapsed / self.UpdateRTDTimeConstant)
+        self.CurrentRTValue = max(self.RTMinLim, TimeEllapsed / self.UpdateRTDTimeConstant * 1e3)
 
         LogValue = np.log10(self.CurrentRTValue)
         self.RTRectangle.set_color(self.RTDColors[max(min(int(10 * (LogValue + 4) / 5), 9), 0)])
@@ -844,6 +874,7 @@ class Display:
         self.RealTimeDisplayAx.set_title("{0:.1f}".format(LogValue))
 
         self.RealTimeDisplay.canvas.draw()
+        self.LastLoopUpdates['RTD'][0] = random.random()
         self.MainWindow.after(self.UpdateRTDTimeConstant, self.UpdateRTD)
 
     def UpdateScene(self):
@@ -862,24 +893,25 @@ class Display:
         self.FPSLabel['text'] = "FPS : {0}".format(int(self.FPSValue))
         self.PreviousTime = t
         self.PreviousNEvents = 0
-        self.MainWindow.after(5, self.UpdateScene)
+        self.LastLoopUpdates['Scene'][0] = random.random()
+        self.MainWindow.after(self.UpdateSceneTimeConstant, self.UpdateScene)
 
-    def _DecryptFullEvent(self, Socket, eventList):
-        t = eventList[0]
+    def _DecryptFullEvent(self, Socket, eventDict):
+        t = eventDict[0]
         self.StreamsTimes[Socket] = max(self.StreamsTimes[Socket], t)
-        for Extension in eventList[1:]:
-            self.Handlers[Extension[0]].Decrypt(Socket, t, Extension[1:])
+        if 1 in eventDict:
+            Location = eventDict[1][0]
+        else:
+            Location = None
+        for ExtensionKey, Data in eventDict.items():
+            if ExtensionKey == 0:
+                continue
+            self.Handlers[ExtensionKey].Decrypt(Socket, t, Data, Location)
 
-    def _InitTauEventsVars(self):
-        self._EventDecryptFunctions[5] = self._DecryptTauEvent
-
-    def _DecryptTauEvent(self, Socket, t, eventList):
-        self.StreamsTaus[Socket] = eventList[0]
-        self.UpdateTauDisplayed()
-        
     def UpdateTS(self):
         self.TSLabel['text'] = "{0} ms".format(int(1000*self.StreamsTimes[self.CurrentStream]))
-        self.MainWindow.after(50, self.UpdateTS)
+        self.LastLoopUpdates['TS'][0] = random.random()
+        self.MainWindow.after(self.UpdateTSTimeConstant, self.UpdateTS)
 
 class QuestionThreadClass(threading.Thread):
     def __init__(self, parent, conn):
@@ -925,7 +957,7 @@ class QuestionThreadClass(threading.Thread):
             if data['command'] == 'socketdata':
                 s = data['socket']
                 if s in self.Parent.Streams:
-                    self.Parent.StreamsInfos[s] = data['infosline1']+"\n"+data['infosline2']
+                    self.Parent.StreamsInfos[s] = str(s) + ' : ' + data['infosline1']+"\n"+data['infosline2']
                     self.Parent.ResponseBot.Answer(data['id'],'datareceived')
                     self.Parent.ReloadNames = True
                 else:
@@ -938,12 +970,6 @@ class QuestionThreadClass(threading.Thread):
                     self.Parent.ResponseBot.Answer(data['id'],'socketdestroyed')
                 except:
                     self.Parent.ResponseBot.Answer(data['id'],'destructionfailed')
-
-            if data['command'] == 'rewind':
-                Stream = data['socket']
-                tNew = data['tNew']
-                self.Parent.StreamsTimes[Stream] = tNew
-                self.Parent.ResponseBot.Answer(data['id'],'rewinded')
 
         self.Connexion.close()
         print("Questions connexion closed")
