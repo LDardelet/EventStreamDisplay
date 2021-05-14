@@ -91,7 +91,7 @@ class EventHandler:
         self.StreamsMaps[Socket][Data[0][0], Data[0][1], Data[1]] = t
     def AddStreamVars(self, Name, Geometry):
         self.StreamsShapes[Name] = Geometry
-        self.StreamsMaps[Name] = -10*np.ones(self.StreamsShapes[Name])
+        self.StreamsMaps[Name] = -10*np.ones(tuple(self.StreamsShapes[Name]) + (2,))
     def DelStreamVars(self, Name):
         del self.StreamsMaps[Name]
         del self.StreamsShapes[Name]
@@ -186,7 +186,7 @@ class DisparityHandler:
 
     def AddStreamVars(self, Name, Geometry):
         self.StreamsShapes[Name] = Geometry
-        self.DisparitiesMaps[Name] = np.zeros(tuple(Geometry[:2]) + (2,))
+        self.DisparitiesMaps[Name] = np.zeros(tuple(Geometry) + (2,))
         self.Compensate[Name] = False
 
     def Decrypt(self, Socket, t, Data, Location = None):
@@ -448,7 +448,7 @@ class FlowHandler:
         self.FlowMaps[Socket][Location[0], Location[1], 2] = t
         self.UpdatedFlowsLocations[Socket].add(tuple(Location))
     def AddStreamVars(self, Name, Geometry):
-        self.FlowMaps[Name] = np.zeros(tuple(Geometry[:2]) + (3,))
+        self.FlowMaps[Name] = np.zeros(tuple(Geometry) + (3,))
         self.FlowMaps[Name][:,:,2] = -np.inf
         self.UpdatedFlowsLocations[Name] = set()
         self.PlottedFlows[Name] = []
@@ -515,6 +515,7 @@ class Display:
         self.SharedData = {'t':0, 'Tau':self._DefaultTau, 'Stream':None, 'ReloadCommand': self.Reload}
         self.dTau = 0.005
         self.PreviousTime = 0.
+        self.PreviousSceneTime = 0.
         self.PreviousNEvents = 0
 	
         self.MainSocket = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
@@ -619,7 +620,7 @@ class Display:
                 self.Handlers[UnusedKey] = NullHandler()
 
         self.StreamsVariable = Tk.IntVar(master = self.MainWindow)
-        self._MinimumGeometry = np.array([10, 10, 2])
+        self._MinimumGeometry = np.array([10, 10])
         self.AddStream('None', self._MinimumGeometry)
 
         self.RTMinLim = 10**-4
@@ -721,8 +722,69 @@ class Display:
                 self.LastLoopUpdates[Loop][1] = self.LastLoopUpdates[Loop][0] # We aknowledge that update
             else:
                 print("Re-starting loop {0}".format(Loop))
-                self.__class__.__dict__['Update'+Loop](self) # Else we restart that loop, and do not aknoledge any update. Next occurence, LastUpdateID should have changed
+                try:
+                    self.__class__.__dict__['LoopUpdate'+Loop](self) # Else we restart that loop, and do not aknoledge any update. Next occurence, LastUpdateID should have changed
+                except Exception as e:
+                    print("Restart failure", e)
         self.MainWindow.after(self.FullUpdateCheckTimeConstant, self.FullUpdateCheck)
+
+    def LoopUpdateStreamsList(self, Cycle = True):
+        if self.CurrentlyDisplayedStreams != self.Streams or self.ReloadNames:
+            self.ReloadNames = False
+            self.CurrentlyDisplayedStreams = []
+            print("Updating stream list, aiming for {0} streams".format(len(self.Streams)))
+            for Stream in dict(self.StreamsButtons).keys():
+                self.StreamsButtons[Stream].destroy()
+                del self.StreamsButtons[Stream]
+            for Stream in self.Streams:
+                self.StreamsButtons[Stream] = Tk.Radiobutton(self.StreamsFrame, text = self.StreamsInfos[Stream], variable = self.StreamsVariable, value = self.Streams.index(Stream), command = self.Reload)
+                self.StreamsButtons[Stream].pack(anchor = Tk.W)
+                self.CurrentlyDisplayedStreams += [Stream]
+            self.StreamsVariable.set(len(self.Streams)-1)
+            self.Reload()
+        if Cycle:
+            self.LastLoopUpdates['StreamsList'][0] = random.random()
+            self.MainWindow.after(self.UpdateStreamsListTimeConstant, self.LoopUpdateStreamsList)
+
+    def LoopUpdateRTD(self):
+        TimeEllapsed = self.StreamsTimes[self.CurrentStream] - self.LastTSAtRTDUpdate[self.CurrentStream]
+        self.LastTSAtRTDUpdate[self.CurrentStream] = self.StreamsTimes[self.CurrentStream]
+        self.CurrentRTValue = max(self.RTMinLim, TimeEllapsed / self.UpdateRTDTimeConstant * 1e3)
+
+        LogValue = np.log10(self.CurrentRTValue)
+        self.RTRectangle.set_color(self.RTDColors[max(min(int(10 * (LogValue + 4) / 5), 9), 0)])
+        self.RTRectangle.set_height(self.CurrentRTValue)
+        self.RealTimeDisplayAx.set_title("{0:.1f}".format(LogValue))
+
+        self.RealTimeDisplay.canvas.draw()
+        self.LastLoopUpdates['RTD'][0] = random.random()
+        t = time.time()
+        self.EfficiencyLabel['text'] = "{0} ev/s".format(int(self.PreviousNEvents / (t - self.PreviousTime)))
+        self.PreviousTime = t
+        self.PreviousNEvents = 0
+        self.MainWindow.after(self.UpdateRTDTimeConstant, self.LoopUpdateRTD)
+
+    def LoopUpdateScene(self):
+        if self.ReloadMap:
+            self.DisplayAx.clear()
+        self.SharedData['t'] = self.StreamsTimes[self.CurrentStream]
+        for Handler in self.Handlers.values():
+            Handler.Update(self.ReloadMap)
+
+        self.Display.canvas.draw()
+        self.ReloadMap = False
+
+        t = time.time()
+        self.FPSValue = self.FPSValue * 0.9 + 0.1/(t - self.PreviousSceneTime)
+        self.FPSLabel['text'] = "FPS : {0}".format(int(self.FPSValue))
+        self.PreviousSceneTime = t
+        self.LastLoopUpdates['Scene'][0] = random.random()
+        self.MainWindow.after(self.UpdateSceneTimeConstant, self.LoopUpdateScene)
+
+    def LoopUpdateTS(self):
+        self.TSLabel['text'] = "{0} ms".format(int(1000*self.StreamsTimes[self.CurrentStream]))
+        self.LastLoopUpdates['TS'][0] = random.random()
+        self.MainWindow.after(self.UpdateTSTimeConstant, self.LoopUpdateTS)
 
     @property
     def Tau(self):
@@ -769,7 +831,13 @@ class Display:
     def OnClick(self, event):
         if event.inaxes is None:
             return
-        self.PointLabel['text'] = "x = {0}, y = {1}".format(int(event.xdata), int(event.ydata))
+        x, y = int(event.xdata), int(event.ydata)
+        try:
+            V = self.Handlers[self.DisplayedMapTypeVar.get()].DisplayImShow.get_array()[x, y]
+            self.PointLabel['text'] = "x = {0}, y = {1}, V = {2:.3f}".format(x, y, V)
+        except Exception as e:
+            print(e)
+            self.PointLabel['text'] = "x = {0}, y = {1}, V = ?".format(x, y)
 
     def SwitchStream(self, var):
         if var != 0:
@@ -804,24 +872,6 @@ class Display:
                 self.RemoveStream(Stream)
         self.ReloadNames = True
         self.UpdateStreamsList(Cycle = False)
-
-    def UpdateStreamsList(self, Cycle = True):
-        if self.CurrentlyDisplayedStreams != self.Streams or self.ReloadNames:
-            self.ReloadNames = False
-            self.CurrentlyDisplayedStreams = []
-            print("Updating stream list, aiming for {0} streams".format(len(self.Streams)))
-            for Stream in dict(self.StreamsButtons).keys():
-                self.StreamsButtons[Stream].destroy()
-                del self.StreamsButtons[Stream]
-            for Stream in self.Streams:
-                self.StreamsButtons[Stream] = Tk.Radiobutton(self.StreamsFrame, text = self.StreamsInfos[Stream], variable = self.StreamsVariable, value = self.Streams.index(Stream), command = self.Reload)
-                self.StreamsButtons[Stream].pack(anchor = Tk.W)
-                self.CurrentlyDisplayedStreams += [Stream]
-            self.StreamsVariable.set(len(self.Streams)-1)
-            self.Reload()
-        if Cycle:
-            self.LastLoopUpdates['StreamsList'][0] = random.random()
-            self.MainWindow.after(self.UpdateStreamsListTimeConstant, self.UpdateStreamsList)
 
     def ChangeTau(self, var):
         self.StreamsTaus[self.CurrentStream] = max(self.dTau, self.Tau + var * self.dTau)
@@ -863,39 +913,6 @@ class Display:
         self.MainWindow.quit()
         self.MainWindow.destroy()
 
-    def UpdateRTD(self):
-        TimeEllapsed = self.StreamsTimes[self.CurrentStream] - self.LastTSAtRTDUpdate[self.CurrentStream]
-        self.LastTSAtRTDUpdate[self.CurrentStream] = self.StreamsTimes[self.CurrentStream]
-        self.CurrentRTValue = max(self.RTMinLim, TimeEllapsed / self.UpdateRTDTimeConstant * 1e3)
-
-        LogValue = np.log10(self.CurrentRTValue)
-        self.RTRectangle.set_color(self.RTDColors[max(min(int(10 * (LogValue + 4) / 5), 9), 0)])
-        self.RTRectangle.set_height(self.CurrentRTValue)
-        self.RealTimeDisplayAx.set_title("{0:.1f}".format(LogValue))
-
-        self.RealTimeDisplay.canvas.draw()
-        self.LastLoopUpdates['RTD'][0] = random.random()
-        self.MainWindow.after(self.UpdateRTDTimeConstant, self.UpdateRTD)
-
-    def UpdateScene(self):
-        if self.ReloadMap:
-            self.DisplayAx.clear()
-        self.SharedData['t'] = self.StreamsTimes[self.CurrentStream]
-        for Handler in self.Handlers.values():
-            Handler.Update(self.ReloadMap)
-
-        self.Display.canvas.draw()
-        self.ReloadMap = False
-
-        t = time.time()
-        self.EfficiencyLabel['text'] = "{0} ev/s".format(int(self.PreviousNEvents / (t - self.PreviousTime)))
-        self.FPSValue = self.FPSValue * 0.8 + 0.2/(t - self.PreviousTime)
-        self.FPSLabel['text'] = "FPS : {0}".format(int(self.FPSValue))
-        self.PreviousTime = t
-        self.PreviousNEvents = 0
-        self.LastLoopUpdates['Scene'][0] = random.random()
-        self.MainWindow.after(self.UpdateSceneTimeConstant, self.UpdateScene)
-
     def _DecryptFullEvent(self, Socket, eventDict):
         t = eventDict[0]
         self.StreamsTimes[Socket] = max(self.StreamsTimes[Socket], t)
@@ -907,11 +924,6 @@ class Display:
             if ExtensionKey == 0:
                 continue
             self.Handlers[ExtensionKey].Decrypt(Socket, t, Data, Location)
-
-    def UpdateTS(self):
-        self.TSLabel['text'] = "{0} ms".format(int(1000*self.StreamsTimes[self.CurrentStream]))
-        self.LastLoopUpdates['TS'][0] = random.random()
-        self.MainWindow.after(self.UpdateTSTimeConstant, self.UpdateTS)
 
 class QuestionThreadClass(threading.Thread):
     def __init__(self, parent, conn):
