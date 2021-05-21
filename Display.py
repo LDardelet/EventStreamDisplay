@@ -506,8 +506,35 @@ class FlowHandler:
 
         self.FlowsLabel['text'] = "{0}".format(len(self.PlottedFlows[CurrentStream]))
 
+class TwistHandler:
+    Key = 7
+    DisplayType = "Info"
+    Name = "Twist"
+    def __init__(self, Master, Display, Canvas, InfoFrame, OptionsFrame, SharedData):
+        self.SharedData = SharedData
 
-_HANDLERS = [EventHandler, TrackerHandler, DisparityHandler, FlowHandler]
+        self.ReceivedTwists = {}
+
+        L = Tk.Label(InfoFrame, text = "Latest twist :")
+        L.pack(anchor = Tk.W)
+        self.TwistLabel = Tk.Label(InfoFrame)
+        self.TwistLabel.pack(anchor = Tk.W)        
+
+    def Decrypt(self, Socket, t, Data, Location = None):
+        self.ReceivedTwists[Socket] = (Data[0], Data[1])
+
+    def AddStreamVars(self, Name, Geometry):
+        self.ReceivedTwists[Name] = (np.zeros(3), np.zeros(3))
+
+    def DelStreamVars(self, Name):
+        del self.ReceivedTwists[Name]
+    
+    def Update(self, Reload = False):
+        CurrentStream = self.SharedData['CurrentStream']
+        omega, v = self.ReceivedTwists[CurrentStream]
+        self.TwistLabel['text'] = "w_x = {0:.3f}\nw_y = {1:.3f}\nw_z = {2:.3f}\nv_x = {3:.3f}\nv_y = {4:.3f}\nv_z = {5:.3f}".format(omega[0], omega[1], omega[2], v[0], v[1], v[2])
+
+_HANDLERS = [EventHandler, TrackerHandler, DisparityHandler, FlowHandler, TwistHandler]
 
 class Display:
     _DefaultTau = 0.030
@@ -588,10 +615,11 @@ class Display:
         UsedKeys = set()
         HandlersRows = {"Map":0, "Dot":0}
         for nType, Handler in enumerate(_HANDLERS):
-            letter = Handler.Name[0].lower()
-            while letter in UsedKeys:
-                letter = alphabet[alphabet.index(letter)-1]
-            UsedKeys.add(letter)
+            if Handler.DisplayType != 'Info':
+                letter = Handler.Name[0].lower()
+                while letter in UsedKeys:
+                    letter = alphabet[alphabet.index(letter)-1]
+                UsedKeys.add(letter)
             if Handler.DisplayType == "Dot":
                 HandlerFrame = self.DisplayedTypesDotFrame
                 HandlerInfoFrame = self.HandlersDotInfoFrame
@@ -604,12 +632,19 @@ class Display:
                 HandlerInfoFrame = self.HandlersMapInfoFrame
                 Button = Tk.Radiobutton(HandlerFrame, text = Handler.Name + ' ({0})'.format(letter), variable = self.DisplayedMapTypeVar, value = Handler.Key, command = lambda:self.SwitchDisplayedMapType())
                 self.MainWindow.bind('<{0}>'.format(letter), lambda event, E = Handler.Key:self.SwitchDisplayedMapType(E))
+            elif Handler.DisplayType == 'Info':
+                HandlerInfoFrame = self.HandlersMapInfoFrame
+                HandlerFrame = None
+                Button = None
             else:
                 raise Exception("Ill defined handler")
-            Button.grid(row = HandlersRows[Handler.DisplayType], column = 0, sticky = Tk.W)
-            HandlerOptionsFrame = Tk.Frame(HandlerFrame)
-            HandlerOptionsFrame.grid(row = HandlersRows[Handler.DisplayType], column = 1, sticky = Tk.W)
-            HandlersRows[Handler.DisplayType] += 1
+            if not HandlerFrame is None:
+                Button.grid(row = HandlersRows[Handler.DisplayType], column = 0, sticky = Tk.W)
+                HandlerOptionsFrame = Tk.Frame(HandlerFrame)
+                HandlerOptionsFrame.grid(row = HandlersRows[Handler.DisplayType], column = 1, sticky = Tk.W)
+                HandlersRows[Handler.DisplayType] += 1
+            else:
+                HandlerOptionsFrame = None
 
             HandlerInfoFrame = Tk.Frame(HandlerInfoFrame)
             HandlerInfoFrame.pack(anchor = Tk.W)
@@ -626,7 +661,7 @@ class Display:
         self.RTMinLim = 10**-4
         self.RTMaxLim = 10**1
         self.CurrentRTValue = 1
-        self.RealTimeDisplay = Figure(figsize=(1,2.5), dpi=100)
+        self.RealTimeDisplay = Figure(figsize=(1,2), dpi=100)
         self.RealTimeDisplayAx = self.RealTimeDisplay.add_subplot(111)
         self.RealTimeDisplayAx.tick_params('both', bottom =  'off', labelbottom = 'off')
         self.RealTimeDisplayAx.set_yscale('log')
